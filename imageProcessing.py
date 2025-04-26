@@ -26,12 +26,12 @@ class Processing:
         self.color_presets = {
             "Red": {"low_H": 0, "high_H": 10, "low_S": 100, "high_S": 255, "low_V": 100, "high_V": 255},
             "Blue": {"low_H": 100, "high_H": 130, "low_S": 50, "high_S": 255, "low_V": 50, "high_V": 255},
-            "Pole": {"low_H": 0, "high_H": 179, "low_S": 0, "high_S": 42, "low_V": 159, "high_V": 255},
+            "Pole": {"low_H": 0, "high_H": 97, "low_S": 0, "high_S": 47, "low_V": 175, "high_V": 244},
             "Black": {"low_H": 0, "high_H": 179, "low_S": 0, "high_S": 71, "low_V": 0, "high_V": 94}
         }
 
         self.polePrest = {
-            "low_H": 0, "high_H": 179, "low_S": 0, "high_S": 42, "low_V": 159, "high_V": 255
+            "low_H": 0, "high_H": 97, "low_S": 0, "high_S": 47, "low_V": 175, "high_V": 244
         }
 
         # Starting default at pole
@@ -162,20 +162,37 @@ class Processing:
     ############### Object detect ###############
     # Colour vision
     def getMask(self, threshold):
-        # Preprocess HSV mask
-        mask = cv2.GaussianBlur(threshold,(15, 15), 0)
+        # Initial Gaussian blur
+        blurred = cv2.GaussianBlur(threshold, (15, 15), 0)
 
-        # # clean small holes inside objects (closing) then, remove small blobs/noise (opening)
-        
-        # mask = cv2.morphologyEx(threshold, cv2.MORPH_CLOSE, kernel, iterations=2)
-        # mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        # Binary thresholding to remove low-intensity noise
+        _, binary = cv2.threshold(blurred, 200, 255, cv2.THRESH_BINARY)
 
+        # Morphological operations
         kernel = np.ones((5, 5), np.uint8)
-        mask = cv2.erode(mask, kernel, iterations=2)
-        mask = cv2.dilate(mask, kernel, iterations=1)
+        mask = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)  # Fill small holes
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=2)    # Remove small noise
 
-        mask = cv2.GaussianBlur(mask, (15, 15), 0)
+        # Optional: Remove small blobs by area
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        mask_clean = np.zeros_like(mask)
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area > 1000:  # You can tweak this threshold
+                cv2.drawContours(mask_clean, [cnt], -1, 255, -1)
+
+        return mask_clean
+
+    def getPoleMask(self, threshold):
+        # Morphology
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(threshold, cv2.MORPH_CLOSE, kernel, iterations=2)  # Fill gaps
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)   # Remove small noise
+
+        # Optional: smooth & erode a bit to avoid blob fusion
+        mask = cv2.GaussianBlur(mask, (5, 5), 0)
         mask = cv2.erode(mask, kernel, iterations=1)
+        mask = cv2.dilate(mask, kernel, iterations=1)
 
         return mask
 
@@ -187,7 +204,9 @@ class Processing:
         mask = self.getMask(threshold)
 
         # Contouring
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, hierarchy = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
 
         # Sort contours by area to focus on the largest contour (most prominent shape)
         contours = sorted(contours, key=cv2.contourArea, reverse=True)
@@ -242,30 +261,37 @@ class Processing:
     def poleDetect(self, threshold, frame):
         """Detect and label contours in the thresholded frame."""
 
-        # Basic colour processing
-        mask = self.getMask(threshold)
-
         # Find contours
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        min_area = 250  # Adjust this value as needed
+        contours, _ = cv2.findContours(threshold, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        min_area = 200  # Adjust this value as needed
         contours = [cnt for cnt in contours if cv2.contourArea(cnt) > min_area]
 
         # Sort contours by area to focus on the largest contour (closest?)
         contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
+
         # Centroids
         centroids = []
+        counter = 1
         for contour in contours:
             # Bounding box
             x, y, w, h = cv2.boundingRect(contour)
+            # cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 255, 255), 2)
+            aspect_ratio = h / float(w)
 
             # Determine "poles"
-            if h > w * 1.5:
-                # Draw conour
-                cv2.drawContours(frame, [contour], -1, (128, 128, 128), 2)
+            if aspect_ratio > 2:
+                # if (y > frame.shape[0] * 0.9) or (y < frame.shape[0] * 0.2):  # very low on frame
+                #     continue
 
-                # Draw rectangle
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+                # Draw conour
+                if counter < 3:
+                    cv2.drawContours(frame, [contour], -1, (128, 128, 128), 2)
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
+                else:
+                    cv2.drawContours(frame, [contour], -1, (128, 128, 128), 2)
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+                counter += 1
                 rectangle = True
 
             else:
@@ -285,9 +311,10 @@ class Processing:
                     cv2.circle(frame, (Cx, Cy), 4, (255, 0, 0), -1)
                     cv2.putText(frame, f"({Cx}, {Cy})", (Cx + 10, Cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
                 else:
-                    # Draw the centroid and label the contour
-                    cv2.circle(frame, (Cx, Cy), 4, (0, 0, 255), -1)
-                    cv2.putText(frame, f"({Cx}, {Cy})", (Cx + 10, Cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                    pass
+                    # # Draw the centroid and label the contour
+                    # cv2.circle(frame, (Cx, Cy), 4, (0, 0, 255), -1)
+                    # cv2.putText(frame, f"({Cx}, {Cy})", (Cx + 10, Cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
         return frame, centroids
 

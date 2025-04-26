@@ -38,7 +38,7 @@ tello = Tello()
 RECORD = False
 NOFLY = False
 view = DRONE       # WEBCAM, DRONE
-mode = COLOURCHASE     # STREAMONLY, MANUALFLY, COLOURCHASE, SEARCHNDESTROY, OBSTACLE
+mode = OBSTACLE     # STREAMONLY, MANUALFLY, COLOURCHASE, SEARCHNDESTROY, OBSTACLE
 cvType = CUSTOMMODE   # CUSTOMMODE, YOLOMODE
 
 
@@ -103,6 +103,7 @@ def start(view, mode):
             tello.takeoff()
             # tello.move_up(60)
             # tello.flip_forward()
+            tello.move_down(20)
             print("Ready")
 
 
@@ -157,8 +158,14 @@ def start(view, mode):
                     captureFrame, centroids = proc.YOLODetect(model, results, frame.copy())
                     
             elif mode == OBSTACLE:
-                captureFrame, centroids = proc.poleDetect(detectFrame, frame.copy())
+                if cvType == CUSTOMMODE:
+                    detectFrame = proc.getPoleMask(detectFrame)
+                    captureFrame, centroids = proc.poleDetect(detectFrame, frame.copy())
 
+                elif cvType == YOLOMODE:
+                    results = model.predict(source=frame, conf=0.5, verbose=False)
+                    captureFrame, centroids = proc.YOLODetect(model, results, frame.copy())
+                    
             elif mode == COLOURCHASE:
                 captureFrame, centroids = proc.poleDetect(detectFrame, frame.copy())
                 
@@ -174,8 +181,10 @@ def start(view, mode):
 
             ############### Record ###############
             if RECORD:
-                frameFile = os.path.join(frameDumpDir, f"frame_{frame_count:06d}.jpg")
-                cv2.imwrite(frameFile, captureFrame)
+                detectFile = os.path.join(frameDumpDir, f"frame_{frame_count:06d}_A.jpg")
+                frameFile = os.path.join(frameDumpDir, f"frame_{frame_count:06d}_B.jpg")
+                cv2.imwrite(detectFile, captureFrame)
+                cv2.imwrite(frameFile, frame)
                 frame_count += 1
 
 
@@ -186,9 +195,10 @@ def start(view, mode):
                 left_right = forward = up_down = yaw = 0
             
             elif mode == OBSTACLE:
+                proc.printHSV()
                 if centroids is not []:
                     left_right, forward, up_down, yaw = navigate_through_poles(centroids, telloC)
-                    
+                    # yaw = 0
                 else:
                     left_right = forward = up_down = yaw = 0
 
@@ -208,9 +218,9 @@ def start(view, mode):
                     # Battery (to keep awake)
                     print(f'Battery: {tello.get_battery()}')
 
-                tello.send_rc_control(left_right, forward, up_down, -yaw)
+                tello.send_rc_control(left_right, forward, up_down, yaw)
             else:
-                print(f"Controls: {[left_right, forward, up_down, yaw]}")
+                print(f"Controls: {[-left_right, forward, up_down, yaw]}")
     
             last_time = time.time()
 

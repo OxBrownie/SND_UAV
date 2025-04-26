@@ -125,46 +125,82 @@ def chase(centroids, telloC):
         up_down_velocity = max(-100, min(100, up_down_velocity))
 
     return left_right_velocity, forward_backward_velocity, up_down_velocity, -yaw_velocity
-
-    
+  
 def navigate_through_poles(centroids, telloC):
     """Calculate RC control inputs to navigate between poles while moving forward."""
 
     # Default velocities
-    forward_backward_velocity = 20  # Constant forward speed
+    forward_backward_velocity = 13  # Constant forward speed
     up_down_velocity = 0  # No vertical movement
     left_right_velocity = 0  # Strafing left/right
     yaw_velocity = 0  # Default no rotation
 
-    # If there are detected poles
+    # Proportional control for lateral movement (left/right) and yaw
+    Kp_yaw = 0.15  # Tuning gain for yaw (rotation)
+    Kp_lr = 0.1    # Tuning gain for left/right movement (lateral)
+    Kp_up = 0
+
+    # Center of the frame (drone should aim here)
+    mid_x = telloC[0]  
+    mid_y = telloC[1]
+
+    centroids.sort(key=lambda c: c[0]) # Sort left to right
+
+    merge_threshold = 50  # Adjust as needed
+    if len(centroids) > 1:
+        filtered = [centroids[0]]
+
+        for c in centroids[1:]:
+            if abs(c[0] - filtered[-1][0]) > merge_threshold:
+                filtered.append(c)
+
+        centroids = filtered
+
+    # More than 1 pole
     if len(centroids) >= 2:
-        # Sort centroids by x-coordinates (left to right)
-        centroids.sort(key=lambda c: c[0])
-
         # Get the middle point between the first two centroids (closest poles)
-        mid_x = (centroids[0][0] + centroids[1][0]) // 2
-        target_x = telloC[0]  # Center of the frame (drone should aim here)
-
-        # Calculate error (offset from center)
-        error = target_x - mid_x
-
-        # Proportional control for lateral movement (left/right) and yaw
-        Kp_yaw = 0.2   # Tuning gain for yaw (rotation)
-        Kp_lr = 0.2    # Tuning gain for left/right movement (lateral)
+        target_x = (centroids[0][0] + centroids[1][0]) // 2
+        target_y = (centroids[0][1] + centroids[1][1]) // 2
+        
+        # Calculate error 
+        error_x = target_x - mid_x    # (+)/(-) = right/left 
+        error_y = target_y - mid_y  # (+)/(-) = down/up 
 
         # Calculate yaw velocity (turn towards the poles)
-        yaw_velocity = int(Kp_yaw * error)
+        forward_backward_velocity = 15
+        yaw_velocity = int(Kp_yaw * error_x)
+        left_right_velocity = int(Kp_lr * error_x)
+        up_down_velocity = int(Kp_up * error_y)  # Negative to go up when object is higher
 
-        # Calculate lateral velocity (move left/right to stay centered)
-        left_right_velocity = int(Kp_lr * error)
+    elif len(centroids) == 1:
+        target_x = centroids[0][0]
+        target_y = centroids[0][1]
 
-        # Limit yaw and lateral velocities to Tello's range (-100 to 100)
-        yaw_velocity = max(-100, min(100, yaw_velocity))
-        left_right_velocity = max(-100, min(100, left_right_velocity))
+        # Calculate error (offset from center)
+        error_x = target_x - mid_x
+        error_y = target_y - mid_y
 
-        # Scale yaw and lateral velocities by forward speed (to make it proportional)
-        yaw_velocity = int(yaw_velocity * (forward_backward_velocity / 20))  # Scale by forward speed
-        left_right_velocity = int(left_right_velocity * (forward_backward_velocity / 20))  # Scale by forward speed
+        # Calculate yaw velocity (turn towards the poles)
+        safe_error_x = error_x if abs(error_x) > 1 else 1 if error_x >= 0 else -1
+        # yaw_velocity = int(Kp_yaw * error)
+        forward_backward_velocity = 13
+        left_right_velocity = int(Kp_lr * safe_error_x)
+        up_down_velocity = int(Kp_up * (error_y))  # Negative to go up when object is higher
+
+    # Limit yaw and lateral velocities to Tello's range (-100 to 100)
+    yaw_velocity = max(-100, min(100, yaw_velocity))
+    left_right_velocity = max(-100, min(100, left_right_velocity))
+    up_down_velocity = max(-100, min(100, up_down_velocity))
+
+    # Cap speeds
+    if left_right_velocity > 10:
+        left_right_velocity = 10
+    elif left_right_velocity < -10:
+        left_right_velocity = -10
+    
+
+    # yaw_velocity = int(yaw_velocity * (forward_backward_velocity / 20))  # Scale by forward speed
+    # left_right_velocity = int(left_right_velocity * (forward_backward_velocity / 20))  # Scale by forward speed
 
     return left_right_velocity, forward_backward_velocity, up_down_velocity, yaw_velocity
 
