@@ -15,31 +15,39 @@ import os
 mainDir = os.getcwd()
 recordingDir = os.path.join(mainDir, "Recordings")
 
-# Variables
+# Window Names
 captureWindow = 'Stream View'
 detectionWindow = 'HSV View'
+mapWindow = "Global View"
+
+# Modes
 STREAMONLY = 0
 MANUALFLY = 1
 COLOURCHASE = 2
 SEARCHNDESTROY = 3
 OBSTACLE = 4
+NAVIGATE = 5
+
+# View
 WEBCAM = 0
 DRONE = 1
+
+# CV Type
 CUSTOMMODE = 0
 YOLOMODE = 1
 
 # Initialise objects
-model = YOLO("yolov8n.pt")
+model = YOLO("weights.pt")
 proc = Processing(window_name=detectionWindow, mode=OBSTACLE)
 tello = Tello()
 
 
 ############### User Define ###############
 RECORD = False
-NOFLY = False
+NOFLY = True
 view = DRONE       # WEBCAM, DRONE
-mode = OBSTACLE     # STREAMONLY, MANUALFLY, COLOURCHASE, SEARCHNDESTROY, OBSTACLE
-cvType = CUSTOMMODE   # CUSTOMMODE, YOLOMODE
+mode = STREAMONLY     # STREAMONLY, MANUALFLY, COLOURCHASE, SEARCHNDESTROY, OBSTACLE
+cvType = YOLOMODE   # CUSTOMMODE, YOLOMODE
 
 
 ############### Runtime ###############
@@ -154,7 +162,9 @@ def start(view, mode):
                     captureFrame, centroids = proc.poleDetect(detectFrame, frame.copy())
 
                 elif cvType == YOLOMODE:
-                    results = model.predict(source=frame, conf=0.5, verbose=False)
+                    results = model([frame])
+                    # results = model.predict(source=frame, conf=0.5, verbose=False)
+                    print(results)
                     captureFrame, centroids = proc.YOLODetect(model, results, frame.copy())
                     
             elif mode == OBSTACLE:
@@ -183,7 +193,7 @@ def start(view, mode):
             if RECORD:
                 detectFile = os.path.join(frameDumpDir, f"frame_{frame_count:06d}_A.jpg")
                 frameFile = os.path.join(frameDumpDir, f"frame_{frame_count:06d}_B.jpg")
-                cv2.imwrite(detectFile, captureFrame)
+                # cv2.imwrite(detectFile, captureFrame)
                 cv2.imwrite(frameFile, frame)
                 frame_count += 1
 
@@ -222,6 +232,8 @@ def start(view, mode):
             else:
                 print(f"Controls: {[-left_right, forward, up_down, yaw]}")
     
+
+            ############### Stream Loop ###############
             last_time = time.time()
 
 
