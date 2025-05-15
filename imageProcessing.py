@@ -319,26 +319,99 @@ class Processing:
         return frame, centroids
 
     # YOLO detect
-    def YOLODetect(self, model, results, frame):
+    # def YOLODetect(self, model, results, frame):
+    #     centroids = []
+    #     count = 0
+    #     for r in results:
+    #         for box in r.boxes:
+    #             count += 1
+    #             # Get box coordinates and confidence
+    #             x1, y1, x2, y2 = map(int, box.xyxy[0])  # top-left and bottom-right corners
+    #             conf = float(box.conf[0])
+    #             cls = int(box.cls[0])  # class ID
+    #             label = model.names[cls]
+
+    #             # Draw rectangle and label on frame
+    #             if count <= 2:
+    #                 cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+    #             else:
+    #                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    #             cv2.putText(frame, f"{label}, {conf:.2f}, {abs((x2-x1)*(y2-y1)):.2f}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+
+    #             # Append centroid
+    #             cx = (x1 + x2) // 2
+    #             cy = (y1 + y2) // 2
+    #             cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
+    #             centroids.append((cx, cy))
+
+    #     return frame, centroids
+
+    def YOLODetectPoles(self, model, results, frame):
         centroids = []
+        centroid_boxes = []
+
         for r in results:
             for box in r.boxes:
-                # Get box coordinates and confidence
-                x1, y1, x2, y2 = map(int, box.xyxy[0])  # top-left and bottom-right corners
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
                 conf = float(box.conf[0])
-                cls = int(box.cls[0])  # class ID
+                cls = int(box.cls[0])
                 label = model.names[cls]
-
-                # Draw rectangle and label on frame
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, f"{label} {conf:.2f}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-
-                # Append centroid
                 cx = (x1 + x2) // 2
                 cy = (y1 + y2) // 2
-                cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
-                centroids.append((cx, cy))
+                area = abs((x2 - x1) * (y2 - y1))
+                centroid_boxes.append(((cx, cy), (x1, y1, x2, y2), conf, label, area))
+
+        # Sort by x-coordinate (left to right)
+        centroid_boxes.sort(key=lambda item: item[0][0])
+
+        # Find the pair with the largest x-gap
+        max_gap = -1
+        max_pair = (None, None)
+        for i in range(len(centroid_boxes) - 1):
+            c1 = centroid_boxes[i][0]
+            c2 = centroid_boxes[i + 1][0]
+            gap = abs(c2[0] - c1[0])
+            if gap > max_gap:
+                max_gap = gap
+                max_pair = (i, i + 1)
+
+        # Reorder list so the widest-gap pair comes first
+        reordered = []
+        if max_pair[0] is not None:
+            reordered.append(centroid_boxes[max_pair[0]])
+            reordered.append(centroid_boxes[max_pair[1]])
+            for i, item in enumerate(centroid_boxes):
+                if i not in max_pair:
+                    reordered.append(item)
+        else:
+            reordered = centroid_boxes
+
+        # Draw boxes and centroids
+        centroids = []
+        for i, (centroid, (x1, y1, x2, y2), conf, label, area) in enumerate(reordered):
+            color = (255, 0, 0) if i < 2 else (0, 255, 0)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(frame, f"{label}, {conf:.2f}, {area:.2f}", (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            cv2.circle(frame, centroid, 4, (0, 0, 255), -1)
+            centroids.append(centroid)
+
+        if len(centroids) >= 2:
+            c1, c2 = centroids[0], centroids[1]
+            target_x = int((c1[0] + c2[0]) / 2)
+            target_y = int((c1[1] + c2[1]) / 2)
+
+            # Visualize target point
+            cv2.circle(frame, (target_x, target_y), 6, (0, 255, 255), -1)
+            cv2.putText(frame, "TARGET", (target_x + 10, target_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+
+        elif len(centroids) == 1:
+            c1 = centroids[0]
+            target_x = c1[0]
+            target_y = c1[1]
+
+            # Visualize target point
+            cv2.circle(frame, (target_x, target_y), 6, (0, 255, 255), -1)
+            cv2.putText(frame, "AVOID", (target_x + 10, target_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+
         return frame, centroids
-
-
-

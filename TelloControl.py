@@ -1,89 +1,12 @@
 ############### Libraries ###############
 import time
 import cv2
+import numpy as np
 
 
 ############### PID Control ###############
 prev_error = 0
 integral = 0
-
-def pidYaw(target_x, current_x, dt):
-    """ Improved PID controller for Tello yaw control """
-    global prev_error, integral
-
-    # PID Gains (Tune these!)
-    Kp = 0.3   # Reduce P gain to prevent overshooting
-    Ki = 0.005  # Small I gain to prevent drifting
-    Kd = 0.3   # Reduce D gain to smooth movements
-
-    # Calculate error (difference between target and current position)
-    error = target_x - current_x
-
-    # Dead zone: If error is small, stop movement
-    DEAD_ZONE = 50  # Pixels threshold
-    if abs(error) < DEAD_ZONE:
-        return 0  # No movement needed
-
-    # Proportional term
-    P = Kp * error
-
-    # Integral term (accumulates error over time)
-    integral += error * dt
-    integral = max(-50, min(50, integral))  # Limit integral wind-up
-    I = Ki * integral
-
-    # Derivative term (change in error)
-    D = Kd * (error - prev_error) / dt if dt > 0 else 0
-
-    # Compute PID output
-    yaw_velocity = int(P + I + D)
-
-    # Limit yaw velocity to Tello's range (-100 to 100)
-    yaw_velocity = max(-50, min(50, yaw_velocity))  # Reduce max yaw speed for smoother control
-
-    # Update previous error
-    prev_error = error
-
-    return yaw_velocity
-
-def pidHeight(target_y, current_y, dt):
-    """ Improved PID controller for Tello yaw control """
-    global prev_error, integral
-
-    # PID Gains (Tune these!)
-    Kp = 0.3   # Reduce P gain to prevent overshooting
-    Ki = 0.005  # Small I gain to prevent drifting
-    Kd = 0.3   # Reduce D gain to smooth movements
-
-    # Calculate error (difference between target and current position)
-    error = target_y - current_y
-
-    # Dead zone: If error is small, stop movement
-    DEAD_ZONE = 50  # Pixels threshold
-    if abs(error) < DEAD_ZONE:
-        return 0  # No movement needed
-
-    # Proportional term
-    P = Kp * error
-
-    # Integral term (accumulates error over time)
-    integral += error * dt
-    integral = max(-50, min(50, integral))  # Limit integral wind-up
-    I = Ki * integral
-
-    # Derivative term (change in error)
-    D = Kd * (error - prev_error) / dt if dt > 0 else 0
-
-    # Compute PID output
-    height_velocity = int(P + I + D)
-
-    # Limit yaw velocity to Tello's range (-100 to 100)
-    height_velocity = max(-50, min(50, height_velocity))  # Reduce max yaw speed for smoother control
-
-    # Update previous error
-    prev_error = error
-
-    return height_velocity
 
 def chase(centroids, telloC):
     """Chase the closest object (centroids[0]) using yaw, left/right, and up/down control."""
@@ -126,82 +49,79 @@ def chase(centroids, telloC):
 
     return left_right_velocity, forward_backward_velocity, up_down_velocity, -yaw_velocity
   
-def navigate_through_poles(centroids, telloC):
-    """Calculate RC control inputs to navigate between poles while moving forward."""
+def navigate_through_poles(centroids, telloCentre, dt):
+    """Navigate using PID control for left-right movement based on detected poles."""
+    global prev_error, integral
+    LOCKOUT = False
 
-    # Default velocities
-    forward_backward_velocity = 13  # Constant forward speed
-    up_down_velocity = 0  # No vertical movement
-    left_right_velocity = 0  # Strafing left/right
-    yaw_velocity = 0  # Default no rotation
+    # Default velocity
+    left_right = 0
+    forward_back = 20
 
-    # Proportional control for lateral movement (left/right) and yaw
-    Kp_yaw = 0.15  # Tuning gain for yaw (rotation)
-    Kp_lr = 0.1    # Tuning gain for left/right movement (lateral)
-    Kp_up = 0
+    # PID constants
+    Kp = 0.0001   # Reduce P gain to prevent overshooting
+    Ki = 0.005  # Small I gain to prevent drifting
+    Kd = 0.05   # Reduce D gain to smooth movements
 
-    # Center of the frame (drone should aim here)
-    mid_x = telloC[0]  
-    mid_y = telloC[1]
+    # Frame centre
+    mid_x, mid_y = telloCentre  
 
-    centroids.sort(key=lambda c: c[0]) # Sort left to right
-
-    merge_threshold = 50  # Adjust as needed
-    if len(centroids) > 1:
-        filtered = [centroids[0]]
-
-        for c in centroids[1:]:
-            if abs(c[0] - filtered[-1][0]) > merge_threshold:
-                filtered.append(c)
-
-        centroids = filtered
-
-    # More than 1 pole
+    # Navigate between two cloests poles
     if len(centroids) >= 2:
-        # Get the middle point between the first two centroids (closest poles)
-        target_x = (centroids[0][0] + centroids[1][0]) // 2
-        target_y = (centroids[0][1] + centroids[1][1]) // 2
-        
-        # Calculate error 
-        error_x = target_x - mid_x    # (+)/(-) = right/left 
-        error_y = target_y - mid_y  # (+)/(-) = down/up 
+        c1, c2 = centroids[0], centroids[1]
+        target_x = (c1[0] + c2[0]) / 2
+        error = target_x - mid_x
 
-        # Calculate yaw velocity (turn towards the poles)
-        forward_backward_velocity = 15
-        yaw_velocity = int(Kp_yaw * error_x)
-        left_right_velocity = int(Kp_lr * error_x)
-        up_down_velocity = int(Kp_up * error_y)  # Negative to go up when object is higher
+        # PID control
+        integral += error * dt
+        derivative = (error - prev_error) / dt if dt > 0 else 0
+        output = Kp * error + Ki * integral + Kd * derivative
+        prev_error = error
+
+        left_right = int(output)
+
+        if abs(error) < 20:
+            print("LOCKOUT")
+            LOCKOUT = False
 
     elif len(centroids) == 1:
-        target_x = centroids[0][0]
-        target_y = centroids[0][1]
+        pole_x = centroids[0][0]
+        error = mid_x - pole_x
+        abs_error = abs(error)
 
-        # Calculate error (offset from center)
-        error_x = target_x - mid_x
-        error_y = target_y - mid_y
+        if abs_error < 50:
+            # Pole directly ahead, strong immediate reaction
+            left_right = 10 if error > 0 else -10
+        else:
+            # Inversely proportional strafe (closer pole = stronger avoidance)
+            k = 10000  # Gain factor, tweak as needed
+            output = k / abs_error
 
-        # Calculate yaw velocity (turn towards the poles)
-        safe_error_x = error_x if abs(error_x) > 1 else 1 if error_x >= 0 else -1
-        # yaw_velocity = int(Kp_yaw * error)
-        forward_backward_velocity = 13
-        left_right_velocity = int(Kp_lr * safe_error_x)
-        up_down_velocity = int(Kp_up * (error_y))  # Negative to go up when object is higher
+            # Cap output between -10 and 10
+            left_right = int(np.clip(np.sign(error) * output, -10, 10))
 
-    # Limit yaw and lateral velocities to Tello's range (-100 to 100)
-    yaw_velocity = max(-100, min(100, yaw_velocity))
-    left_right_velocity = max(-100, min(100, left_right_velocity))
-    up_down_velocity = max(-100, min(100, up_down_velocity))
+    else:
+        left_right = forward_back = 0
 
-    # Cap speeds
-    if left_right_velocity > 10:
-        left_right_velocity = 10
-    elif left_right_velocity < -10:
-        left_right_velocity = -10
-    
+    return left_right, forward_back, LOCKOUT
 
-    # yaw_velocity = int(yaw_velocity * (forward_backward_velocity / 20))  # Scale by forward speed
-    # left_right_velocity = int(left_right_velocity * (forward_backward_velocity / 20))  # Scale by forward speed
+def navigate_to(current_pos, target_pos, yaw, threshold=10, speed_limit=30):
+    dx = target_pos[0] - current_pos[0]
+    dy = target_pos[1] - current_pos[1]
+    distance = np.hypot(dx, dy)
 
-    return left_right_velocity, forward_backward_velocity, up_down_velocity, yaw_velocity
+    if distance < threshold:
+        return 0, 0
 
+    # Direction vector
+    direction_x = dx / distance
+    direction_y = dy / distance
 
+    # Convert to drone-relative frame
+    rel_x = direction_x * np.cos(-yaw) - direction_y * np.sin(-yaw)
+    rel_y = direction_x * np.sin(-yaw) + direction_y * np.cos(-yaw)
+
+    forward_back = int(rel_y * min(speed_limit, distance))
+    left_right = int(rel_x * min(speed_limit, distance))
+
+    return left_right, forward_back
