@@ -151,6 +151,9 @@ def start(view, mode):
     last_time = 0
     frame_count = 0
     centroids = []
+    targets = []
+    waypoint_index = 0
+    found = False
 
     # Loop
     while True:
@@ -201,11 +204,16 @@ def start(view, mode):
                 if cvType == CUSTOMMODE:
                     detectFrame = proc.getPoleMask(detectFrame)
                     captureFrame, centroids = proc.poleDetect(detectFrame, frame.copy())
-
+                
                 elif cvType == YOLOMODE:
                     results = model.predict(source=frame, conf=0.1, verbose=False)
                     captureFrame, centroids = proc.YOLODetectPoles(model, results, frame.copy())
-                    
+            
+            elif mode == SEARCH:
+                if cvType == YOLOMODE:
+                    results = model.predict(source=frame, conf=0.1, verbose=False)
+                    captureFrame, targets = proc.YOLODetectTarget(model, results, frame.copy())
+
             # Draw buttons
             if detectWindow: proc.draw_buttons(detectFrame)
 
@@ -261,7 +269,42 @@ def start(view, mode):
                 left_right, forward_back = navigate_through_poles(centroids, telloCentre, dt)
                 up_down = yawleft_right = 0
 
-            
+            elif mode == SEEK:
+                # Current position
+                drone_pos = map.getDrone()
+
+                # Controls
+                left_right, forward_back, reached = navigate_to(drone_pos, searchCoordinates, yaw, threshold=10, speed_limit=20)
+
+            elif mode == SEARCH:
+                # Set Waypoints
+                waypoints = [(0, 100),   # 1m up
+                          (-100, 0),     # 1m left
+                          (0, -200),     # 2m down
+                          (200, 0),      # 2m right
+                          (0, 200),      # 2m up
+                          (-100, 0)]     # 1m left
+
+                # Coordinates
+                drone_pos = map.getDrone()
+                waypoint = waypoints[waypoint_index]
+
+                # Controls
+                left_right, forward_back, reached = navigate_to(drone_pos, waypoint, yaw, threshold=10, speed_limit=20)
+
+                # Waypoint update
+                if reached:
+                    waypoint_index += 1
+                    if waypoint_index >= len(waypoints):
+                        left_right = forward_back = 0
+
+            elif mode == HOME:
+                # Current position
+                drone_pos = map.getDrone()
+
+                # Controls
+                left_right, forward_back, reached = navigate_to(drone_pos, landCoordinates, yaw, threshold=10, speed_limit=30)
+
             # Commands
             if fly:
                 # Get general state

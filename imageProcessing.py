@@ -319,34 +319,6 @@ class Processing:
 
         return frame, centroids
 
-    # YOLO detect
-    # def YOLODetect(self, model, results, frame):
-    #     centroids = []
-    #     count = 0
-    #     for r in results:
-    #         for box in r.boxes:
-    #             count += 1
-    #             # Get box coordinates and confidence
-    #             x1, y1, x2, y2 = map(int, box.xyxy[0])  # top-left and bottom-right corners
-    #             conf = float(box.conf[0])
-    #             cls = int(box.cls[0])  # class ID
-    #             label = model.names[cls]
-
-    #             # Draw rectangle and label on frame
-    #             if count <= 2:
-    #                 cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-    #             else:
-    #                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-    #             cv2.putText(frame, f"{label}, {conf:.2f}, {abs((x2-x1)*(y2-y1)):.2f}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-
-    #             # Append centroid
-    #             cx = (x1 + x2) // 2
-    #             cy = (y1 + y2) // 2
-    #             cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
-    #             centroids.append((cx, cy))
-
-    #     return frame, centroids
-
     def YOLODetectPoles(self, model, results, frame):
         ############### Initialise ###############
         centroids = []
@@ -416,3 +388,36 @@ class Processing:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
 
         return frame, centroids
+
+    def YOLODetectTarget(self, model, results, frame):
+        ############### Initialise ###############
+        targets = []
+
+        # Extract boxes and get centroids
+        for r in results:
+            for box in r.boxes:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                conf = float(box.conf[0])
+                cls = int(box.cls[0])
+                label = model.names[cls]
+                cx = (x1 + x2) // 2
+                cy = (y1 + y2) // 2
+                area = abs((x2 - x1) * (y2 - y1))
+                targets.append(((cx, cy), (x1, y1, x2, y2), conf, label, area))
+
+        
+        ############### Bounding Boxes ###############
+        for i, (centroid, (x1, y1, x2, y2), conf, label, area) in enumerate(targets):
+            # Colour
+            colour = (255, 0, 0) # Blue
+
+            # Draw bounding box
+            cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2)
+            cv2.putText(frame, f"{label}, {conf:.2f}", (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 2)
+
+            # Draw centroid
+            cv2.circle(frame, centroid, 4, (0, 0, 255), -1)
+            targets.append(centroid)
+
+        return frame, targets
