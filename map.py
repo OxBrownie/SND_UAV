@@ -1,7 +1,54 @@
+############### Libraries ###############
 import cv2
 import numpy as np
+import time
 
 
+############### World View Functions ###############
+def update_map_loop(tello, map, stop_event):
+    """
+    Runs in a separate thread. Periodically updates drone position on the map.
+    """
+
+    ############### Initialise ###############
+    # Variables
+    correction_x = 17
+    correction_y = 0.8
+    update_interval = 0.1  # 10 Hz
+    last_time = time.time()
+
+
+    ############### Loop ###############
+    while not stop_event.is_set():
+        # Frame time
+        current_time = time.time()
+        dt = current_time - last_time
+        last_time = current_time
+
+
+        ############### Drone State ###############
+        try:
+            vx = tello.get_speed_x()
+            vy = tello.get_speed_y()
+        except:
+            time.sleep(0.05)
+            continue
+
+
+        ############### Update Map ###############
+        # Apply correction
+        dx = vy * dt * correction_y
+        dy = vx * dt * correction_x
+
+        # Update drone
+        map.update_drone_position(dx=dx, dy=dy)
+
+
+        ############### Loop End ###############
+        time.sleep(update_interval)
+
+
+############### World Class ###############
 class Map2D:
     def __init__(self, size=(1500, 1500), search=None, land=None):
         self.size = size

@@ -8,7 +8,8 @@ import time
 from TelloControl import *
 from ultralytics import YOLO
 import os
-import sys
+from map import *
+from threading import Thread, Event
 
 
 ############### Initialise ###############
@@ -25,11 +26,12 @@ mapWindow = "Global View"
 STREAMONLY = 0
 MANUALFLY = 1
 COLOURCHASE = 2
-SEEK = 3
-OBSTACLE = 4
-CAPTURE = 5
-HOME = 6
-LAND = 7
+OBSTACLE = 3
+SEEK = 4
+SEARCH = 5
+CAPTURE = 6
+HOME = 7
+LAND = 8
 
 # View
 WEBCAM = 0
@@ -39,10 +41,19 @@ DRONE = 1
 CUSTOMMODE = 0
 YOLOMODE = 1
 
+# World Coordinates
+searchCoordinates = (0, 600)
+targetCoordinates = (None, None)
+landCoordinates = (250, 0)
+
+# Threading
+global stop_event, map_thread
+
 # Initialise objects
 model = YOLO("SearchUAV_V02.pt")
 proc = Processing(window_name=detectionWindow, mode=OBSTACLE)
 tello = Tello()
+map = Map2D(search=searchCoordinates, land=landCoordinates)
 
 
 ############### User Define ###############
@@ -51,6 +62,7 @@ NOFLY = False
 view = DRONE          # WEBCAM, DRONE
 mode = OBSTACLE       # Manually fix mode
 cvType = YOLOMODE     # CUSTOMMODE, YOLOMODE
+thread = True
 
 
 ############### Runtime ###############
@@ -74,17 +86,22 @@ def start(view, mode):
 
     
     ############### View ###############
-    # Windows
+    # Object detect
     if cvType == YOLOMODE:
-        # Not utilising HSV shit
         cv2.destroyWindow(detectionWindow)
         detectWindow = False
     else:
         detectWindow = True
+    
+    # Stream 
     cv2.namedWindow(captureWindow)
-    # TODO: Map window here
 
-    # Select view
+    # Map
+    if thread:
+        cv2.namedWindow(mapWindow)
+
+
+    ############### Camera ###############
     if view == WEBCAM:
         cap = cv2.VideoCapture(0)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
@@ -115,11 +132,18 @@ def start(view, mode):
             tello.send_rc_control(0, 0, 0, 0)
             tello.takeoff()
             time.sleep(1)
-            tello.send_rc_control(0, 0, -20, 0)
-            while True:
-                height = tello.get_height()
-                if height < 30: break
+            # tello.send_rc_control(0, 0, -20, 0)
+            # while True:
+            #     height = tello.get_height()
+            #     if height < 30: break
             print("Ready")
+
+    
+    ############### Threading ###############
+    if thread and (view == DRONE):
+        stop_event = Event()
+        map_thread = Thread(target=update_map_loop, args=(tello, map, stop_event))
+        map_thread.start()
 
 
     ############### Stream ###############
@@ -187,11 +211,21 @@ def start(view, mode):
 
 
             ############### Show Frames ###############
+            # Object detect
             if detectWindow:
                 cv2.imshow(detectionWindow, detectFrame)
+
+            # View
             cv2.imshow(captureWindow, captureFrame)
-            # TODO: Map Window
-            
+
+            # Map
+            if fly:
+                if thread:
+                    yaw = tello.get_yaw()
+                    yaw = np.radians(yaw)
+                    map_frame = map.draw(yaw=yaw)
+                    cv2.imshow(mapWindow, map_frame)
+                
 
             ############### Record ###############
             if RECORD:
@@ -235,6 +269,7 @@ def start(view, mode):
 
                 # Send control
                 tello.send_rc_control(left_right, forward_back, up_down, yawleft_right)
+
             else:
                 print(f"Controls: {[left_right, forward_back, up_down, yawleft_right]}")
     
@@ -255,6 +290,11 @@ def start(view, mode):
 
     # Windows
     cv2.destroyAllWindows()
+
+    # Thread
+    if thread:
+        stop_event.set()
+        map_thread.join()
 
 
 ############### Main Script ###############

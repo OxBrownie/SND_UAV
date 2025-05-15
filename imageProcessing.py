@@ -2,6 +2,7 @@
 import cv2
 import numpy as np
 
+
 class Processing:
     ############### Initialise ###############
     def __init__(self, window_name="HSV Threshold", mode=0):
@@ -347,9 +348,11 @@ class Processing:
     #     return frame, centroids
 
     def YOLODetectPoles(self, model, results, frame):
+        ############### Initialise ###############
         centroids = []
         centroid_boxes = []
 
+        # Extract boxes and get centroids
         for r in results:
             for box in r.boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
@@ -361,57 +364,55 @@ class Processing:
                 area = abs((x2 - x1) * (y2 - y1))
                 centroid_boxes.append(((cx, cy), (x1, y1, x2, y2), conf, label, area))
 
-        # Sort by x-coordinate (left to right)
+
+        ############### Get Gap ###############
+        # Sort boxes left to right by x
         centroid_boxes.sort(key=lambda item: item[0][0])
 
-        # Find the pair with the largest x-gap
+        # Determine widest gap between adjacent poles
         max_gap = -1
         max_pair = (None, None)
         for i in range(len(centroid_boxes) - 1):
-            c1 = centroid_boxes[i][0]
-            c2 = centroid_boxes[i + 1][0]
-            gap = abs(c2[0] - c1[0])
+            x1 = centroid_boxes[i][0][0]
+            x2 = centroid_boxes[i + 1][0][0]
+            gap = abs(x2 - x1)
             if gap > max_gap:
                 max_gap = gap
                 max_pair = (i, i + 1)
 
-        # Reorder list so the widest-gap pair comes first
-        reordered = []
-        if max_pair[0] is not None:
-            reordered.append(centroid_boxes[max_pair[0]])
-            reordered.append(centroid_boxes[max_pair[1]])
-            for i, item in enumerate(centroid_boxes):
-                if i not in max_pair:
-                    reordered.append(item)
-        else:
-            reordered = centroid_boxes
+        
+        ############### Bounding Boxes ###############
+        for i, (centroid, (x1, y1, x2, y2), conf, label, area) in enumerate(centroid_boxes):
+            # Colour
+            if i in max_pair:
+                colour = (255, 0, 0) # Blue
+            else:
+                colour = (0, 255, 0) # Green
 
-        # Draw boxes and centroids
-        centroids = []
-        for i, (centroid, (x1, y1, x2, y2), conf, label, area) in enumerate(reordered):
-            color = (255, 0, 0) if i < 2 else (0, 255, 0)
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(frame, f"{label}, {conf:.2f}, {area:.2f}", (x1, y1 - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            # Draw bounding box
+            cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2)
+            cv2.putText(frame, f"{label}, {conf:.2f}", (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 2)
+
+            # Draw centroid
             cv2.circle(frame, centroid, 4, (0, 0, 255), -1)
             centroids.append(centroid)
 
-        if len(centroids) >= 2:
-            c1, c2 = centroids[0], centroids[1]
-            target_x = int((c1[0] + c2[0]) / 2)
-            target_y = int((c1[1] + c2[1]) / 2)
-
-            # Visualize target point
-            cv2.circle(frame, (target_x, target_y), 6, (0, 255, 255), -1)
-            cv2.putText(frame, "TARGET", (target_x + 10, target_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+        
+        ############### Visualsie Targets ###############
+        if len(centroids) >= 2 and max_pair[0] is not None:
+            c1 = centroids[max_pair[0]]
+            c2 = centroids[max_pair[1]]
+            target_x = (c1[0] + c2[0]) // 2
+            target_y = (c1[1] + c2[1]) // 2
+            cv2.circle(frame, (target_x, target_y), 6, (255, 0, 0), -1)
+            cv2.putText(frame, "TARGET", (target_x + 10, target_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
 
         elif len(centroids) == 1:
-            c1 = centroids[0]
-            target_x = c1[0]
-            target_y = c1[1]
-
-            # Visualize target point
-            cv2.circle(frame, (target_x, target_y), 6, (0, 255, 255), -1)
-            cv2.putText(frame, "AVOID", (target_x + 10, target_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+            c = centroids[0]
+            cv2.circle(frame, c, 6, (255, 0, 0), -1)
+            cv2.putText(frame, "AVOID", (c[0] + 10, c[1]),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
 
         return frame, centroids
