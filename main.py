@@ -26,12 +26,13 @@ mapWindow = "Global View"
 STREAMONLY = 0
 MANUALFLY = 1
 COLOURCHASE = 2
-OBSTACLE = 3
-SEEK = 4
-SEARCH = 5
-CAPTURE = 6
-HOME = 7
-LAND = 8
+STARTUP = 3
+OBSTACLE = 4
+SEEK = 5
+SEARCH = 6
+CAPTURE = 7
+HOME = 8
+LAND = 9
 
 # View
 WEBCAM = 0
@@ -50,7 +51,7 @@ landCoordinates = (250, 0)
 global stop_event, map_thread
 
 # Initialise objects
-model = YOLO("SearchUAV_V02.pt")
+model = YOLO("SearchUAV_V04.pt")
 proc = Processing(window_name=detectionWindow, mode=OBSTACLE)
 tello = Tello()
 map = Map2D(search=searchCoordinates, land=landCoordinates)
@@ -60,9 +61,10 @@ map = Map2D(search=searchCoordinates, land=landCoordinates)
 RECORD = False
 NOFLY = False
 view = DRONE          # WEBCAM, DRONE
-mode = OBSTACLE       # Manually fix mode
+mode = SEARCH       # Manually fix mode
 cvType = YOLOMODE     # CUSTOMMODE, YOLOMODE
 thread = True
+transit = True
 
 
 ############### Runtime ###############
@@ -114,9 +116,15 @@ def start(view, mode):
     elif view == DRONE:
         # Drone Connection
         tello.connect(True)
-        time.sleep(1)
+        time.sleep(2)
         print(f'Battery: {tello.get_battery()}, Temperature: {tello.get_temperature()}')
 
+        # # Camera direction
+        # if mode == SEARCH or mode == LAND:
+        #     tello.set_video_direction(0)
+        # else:
+        #     tello.set_video_direction(0)
+            
         # Start drone stream
         tello.streamon()
 
@@ -126,16 +134,11 @@ def start(view, mode):
         else:
             fly = True
         print(f"Fly status: {fly}")
-        time.sleep(1)
+        time.sleep(2)
 
         if fly:
             tello.send_rc_control(0, 0, 0, 0)
             tello.takeoff()
-            time.sleep(1)
-            # tello.send_rc_control(0, 0, -20, 0)
-            # while True:
-            #     height = tello.get_height()
-            #     if height < 30: break
             print("Ready")
 
     
@@ -151,9 +154,11 @@ def start(view, mode):
     last_time = 0
     frame_count = 0
     centroids = []
-    targets = []
+    target = []
+    LZ = []
     waypoint_index = 0
     found = False
+    inView = True
 
     # Loop
     while True:
@@ -188,18 +193,22 @@ def start(view, mode):
             # HSV filter
             if detectWindow: detectFrame = proc.applyHSV(frame.copy())
 
-            # Object Detect
+            # Non active Modes
             if mode == STREAMONLY:
                 if cvType == CUSTOMMODE:
                     captureFrame, centroids = proc.objectDetect(detectFrame, frame.copy())
 
                 elif cvType == YOLOMODE:
                     results = model.predict(source=frame, conf=0.1, verbose=False)
-                    captureFrame, centroids = proc.YOLODetectPoles(model, results, frame.copy())
+                    captureFrame, targets = proc.YOLODetectTarget(model, results, frame.copy())
             
             elif mode == COLOURCHASE:
                 captureFrame, centroids = proc.objectDetect(detectFrame, frame.copy())
-                    
+
+            # Active modes 
+            if mode == STARTUP:
+                captureFrame = frame.copy()
+                
             elif mode == OBSTACLE:
                 if cvType == CUSTOMMODE:
                     detectFrame = proc.getPoleMask(detectFrame)
@@ -209,10 +218,27 @@ def start(view, mode):
                     results = model.predict(source=frame, conf=0.1, verbose=False)
                     captureFrame, centroids = proc.YOLODetectPoles(model, results, frame.copy())
             
+            elif mode == SEEK:
+                captureFrame = frame.copy()
+
             elif mode == SEARCH:
                 if cvType == YOLOMODE:
                     results = model.predict(source=frame, conf=0.1, verbose=False)
-                    captureFrame, targets = proc.YOLODetectTarget(model, results, frame.copy())
+                    captureFrame, target = proc.YOLODetectTarget(model, results, frame.copy())
+
+            elif mode == CAPTURE:
+                if cvType == YOLOMODE:
+                    results = model.predict(source=frame, conf=0.1, verbose=False)
+                    captureFrame, target = proc.YOLODetectTarget(model, results, frame.copy())
+
+            elif mode == HOME:
+                captureFrame = frame.copy()
+
+            elif mode == LAND:
+                if cvType == YOLOMODE:
+                    results = model.predict(source=frame, conf=0.1, verbose=False)
+                    captureFrame, LZ = proc.YOLODetectTarget(model, results, frame.copy())
+
 
             # Draw buttons
             if detectWindow: proc.draw_buttons(detectFrame)
@@ -249,7 +275,7 @@ def start(view, mode):
             telloCentre = (frame.shape[1] // 2, frame.shape[0] // 2 )
             left_right = forward_back = up_down = yawleft_right = 0
 
-            # Modes
+            # Non-active modes
             if mode == STREAMONLY:
                 # Prints
                 if detectWindow: proc.printHSV()
@@ -261,13 +287,26 @@ def start(view, mode):
                 # Controls
                 left_right, forward_back, up_down, yawleft_right = chase(centroids, telloCentre)
             
+            # Active Modes
+            if mode == STARTUP:
+                up_down = -20
+                height = tello.get_height()
+
+                # State change
+                if height < 35:
+                    mode = OBSTACLE
+
             elif mode == OBSTACLE:
                 # Prints
                 if detectWindow: proc.printHSV()
 
                 # Controls
-                left_right, forward_back = navigate_through_poles(centroids, telloCentre, dt)
+                left_right, forward_back, inView = navigate_through_poles(centroids, telloCentre, dt)
                 up_down = yawleft_right = 0
+
+                # State change
+                if not inView:
+                    mode = SEEK
 
             elif mode == SEEK:
                 # Current position
@@ -276,7 +315,14 @@ def start(view, mode):
                 # Controls
                 left_right, forward_back, reached = navigate_to(drone_pos, searchCoordinates, yaw, threshold=10, speed_limit=20)
 
+                # State change
+                if reached:
+                    mode = SEARCH
+
             elif mode == SEARCH:
+                # Print
+                print(f"Waypoint: {waypoint_index}")
+
                 # Set Waypoints
                 waypoints = [(0, 100),   # 1m up
                           (-100, 0),     # 1m left
@@ -297,6 +343,14 @@ def start(view, mode):
                     waypoint_index += 1
                     if waypoint_index >= len(waypoints):
                         left_right = forward_back = 0
+                
+                # State change
+                if target is not []:
+                    mode = CAPTURE
+
+            elif mode == CAPTURE:
+                pass
+                # TODO: Capture code here
 
             elif mode == HOME:
                 # Current position
@@ -304,6 +358,14 @@ def start(view, mode):
 
                 # Controls
                 left_right, forward_back, reached = navigate_to(drone_pos, landCoordinates, yaw, threshold=10, speed_limit=30)
+
+                # State change
+                if reached:
+                    mode = LAND
+
+            elif mode == LAND:
+                pass
+                # TODO: Land
 
             # Commands
             if fly:

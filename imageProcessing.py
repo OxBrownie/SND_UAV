@@ -391,6 +391,7 @@ class Processing:
 
     def YOLODetectTarget(self, model, results, frame):
         ############### Initialise ###############
+        target_boxes = []
         targets = []
 
         # Extract boxes and get centroids
@@ -403,13 +404,13 @@ class Processing:
                 cx = (x1 + x2) // 2
                 cy = (y1 + y2) // 2
                 area = abs((x2 - x1) * (y2 - y1))
-                targets.append(((cx, cy), (x1, y1, x2, y2), conf, label, area))
+                target_boxes.append(((cx, cy), (x1, y1, x2, y2), conf, label, area))
 
         
         ############### Bounding Boxes ###############
-        for i, (centroid, (x1, y1, x2, y2), conf, label, area) in enumerate(targets):
+        for i, (centroid, (x1, y1, x2, y2), conf, label, area) in enumerate(target_boxes):
             # Colour
-            colour = (255, 0, 0) # Blue
+            colour = (255, 0, 0)
 
             # Draw bounding box
             cv2.rectangle(frame, (x1, y1), (x2, y2), colour, 2)

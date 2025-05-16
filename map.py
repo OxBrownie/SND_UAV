@@ -4,51 +4,58 @@ import numpy as np
 import time
 
 
-############### World View Functions ###############
+############### Threaded Update Position ###############
 def update_map_loop(tello, map, stop_event):
     """
     Runs in a separate thread. Periodically updates drone position on the map.
+    Uses manually scaled velocity from Tello state.
     """
-
-    ############### Initialise ###############
-    # Variables
-    correction_x = 17
-    correction_y = 0.8
     update_interval = 0.1  # 10 Hz
     last_time = time.time()
 
-
-    ############### Loop ###############
+    ############### Map Loop ###############
     while not stop_event.is_set():
-        # Frame time
         current_time = time.time()
         dt = current_time - last_time
         last_time = current_time
 
-
-        ############### Drone State ###############
         try:
-            vx = tello.get_speed_x()
-            vy = tello.get_speed_y()
-        except:
-            time.sleep(0.05)
-            continue
+            ############### Tello Speeds ###############
+            vx = tello.get_speed_x()  # forward speed
+            vy = tello.get_speed_y()  # lateral speed
 
+            # Forward corrections
+            if vx > 0:
+                vx *= 1
+            else:
+                vx *= 1
+            
+            # Lateral corrections
+            if vy > 0:
+                vy *= 1
+            else:
+                vy *= 1
 
-        ############### Update Map ###############
-        # Apply correction
-        dx = vy * dt * correction_y
-        dy = vx * dt * correction_x
+            ############### Position Change ###############
+            # Vertical change
+            dy = vx*dt
 
-        # Update drone
-        map.update_drone_position(dx=dx, dy=dy)
+            # Lateral change
+            dx = vy*dt
 
+            # Check
+            print(f"[Velocity] vx: {vx}, vy: {vy} cm/s → dx: {dx:.1f}, dy: {dy:.1f} cm")
 
-        ############### Loop End ###############
+            # Update position on map
+            map.update_drone_position(dx=dx, dy=dy)
+
+        except Exception as e:
+            print("Manual update failed:", e)
+
         time.sleep(update_interval)
 
 
-############### World Class ###############
+############### World Map ###############
 class Map2D:
     def __init__(self, size=(1500, 1500), search=None, land=None):
         self.size = size
@@ -99,6 +106,14 @@ class Map2D:
         self.drone_pos_cm = (x_cm + dx, y_cm + dy)
         px_pos = self.cm_to_px(*self.drone_pos_cm)
         self.path.append(px_pos)
+
+    def set_position(self, pos_cm):
+        self.drone_pos_cm = pos_cm
+        px_pos = self.cm_to_px(*self.drone_pos_cm)
+        self.path.append(px_pos)
+
+    def get_position(self):
+        return self.drone_pos_cm
 
     def getDrone(self):
         return self.drone_pos_cm

@@ -106,6 +106,9 @@ def navigate_through_poles(centroids, telloCentre, dt):
         smoothed_output = SMOOTH_ALPHA * smoothed_output + (1 - SMOOTH_ALPHA) * raw_output
         left_right = int(smoothed_output)
 
+        # Flag
+        inView = True
+
 
     ############### Single Pole Avoidance ###############
     elif len(centroids) == 1:
@@ -130,6 +133,9 @@ def navigate_through_poles(centroids, telloCentre, dt):
         locked_gap = None
         smoothed_output = 0
 
+        # Flag
+        inView = True
+
 
     ############### No Poles ###############
     else:
@@ -141,7 +147,10 @@ def navigate_through_poles(centroids, telloCentre, dt):
         locked_gap = None
         smoothed_output = 0
 
-    return left_right, forward_back
+        # Flag finish
+        inView = False
+
+    return left_right, forward_back, inView
 
 def navigate_to(current_pos, target_pos, yaw, threshold=10, speed_limit=30):
     dx = target_pos[0] - current_pos[0]
@@ -149,7 +158,7 @@ def navigate_to(current_pos, target_pos, yaw, threshold=10, speed_limit=30):
     distance = np.hypot(dx, dy)
 
     if distance < threshold:
-        return 0, 0
+        return 0, 0, True
 
     # Direction vector
     direction_x = dx / distance
@@ -162,4 +171,4 @@ def navigate_to(current_pos, target_pos, yaw, threshold=10, speed_limit=30):
     forward_back = int(rel_y * min(speed_limit, distance))
     left_right = int(rel_x * min(speed_limit, distance))
 
-    return left_right, forward_back
+    return left_right, forward_back, False
