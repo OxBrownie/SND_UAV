@@ -9,16 +9,6 @@ import numpy as np
 prev_error = 0
 integral = 0
 
-prev_error_x = 0
-prev_error_y = 0
-integral_x = 0
-integral_y = 0
-
-# Long term error
-error_buffer = []  # [(error_x, error_y), ...]
-ALIGNMENT_WINDOW = 30  # Number of frames to consider (~2 sec if running at 10Hz)
-
-
 # Gap locking
 locked_gap = None           # Stores (c1, c2) once locked
 gap_lock_timer = 0          # Counts stable frames
@@ -183,55 +173,42 @@ def navigate_to(current_pos, target_pos, yaw, threshold=10, speed_limit=30):
 
     return left_right, forward_back, False
 
-def align_target(target, telloCentre, dt):
-    global prev_error_x, prev_error_y, integral_x, integral_y, error_buffer
 
-    # Default commands
-    left_right = 0
-    forward_back = 0
-    aligned = False
+def centre_person(tello, forward_backward_velocity, left_right_velocity, centroids, telloC):
+    if len(centroids) >= 1:
 
-    # Error (positive = target is to the right/down)
-    error_x = target[0] - telloCentre[0]
-    error_y = telloCentre[1] - target[1]
+        # Get the middle point between the first two centroids (closest poles)
+        mid_x = telloC[0]
+        target_x =centroids[0][0]  # Center of the frame (drone should aim here)
 
-    # PID Constants
-    Kp = 0.25
-    Ki = 0.01
-    Kd = 0.1
+        # Calculate error (offset from center)
+        error_x = mid_x - target_x
 
-    # Integral
-    integral_x += error_x * dt
-    integral_y += error_y * dt
+        mid_y = telloC[1]
+        target_y =centroids[0][1]  # Center of the frame (drone should aim here)
 
-    # Derivative
-    derivative_x = (error_x - prev_error_x) / dt if dt > 0 else 0
-    derivative_y = (error_y - prev_error_y) / dt if dt > 0 else 0
+        # Calculate error (offset from center)
+        error_y= mid_y - target_y
+        # Proportional control for lateral movement (left/right) and longitudinal movement (forward, backward)
+        Kp_lr = 0.2    # Tuning gain for left/right movement (lateral)
+        # Calculate forward_backward velocity (turn towards the poles)
+        Kp_fd = 0.2
+        # Calculate lateral velocity (move left/right to stay centered)
+        left_right_velocity = int(Kp_lr * error_x)
 
-    # PID Output
-    left_right = int(Kp * error_x + Ki * integral_x + Kd * derivative_x)
-    forward_back = int(Kp * error_y + Ki * integral_y + Kd * derivative_y)
+        forward_backward_velocity = int(Kp_fd*error_y)
+        # Limit yaw and lateral velocities to Tello's range (-100 to 100)
+        left_right_velocity = max(-100, min(100, left_right_velocity))
 
-    # Clamp to safe range
-    left_right = max(-30, min(30, left_right))
-    forward_back = max(-30, min(30, forward_back))
+        forward_backward_velocity = max(-100, min(100, forward_backward_velocity))
 
-    # Update previous error
-    prev_error_x = error_x
-    prev_error_y = error_y
+        # Scale yaw and lateral velocities by forward speed (to make it proportional)
+        left_right_velocity = int(left_right_velocity * (forward_backward_velocity / 20))  # Scale by forward speed
+        if error_x < 0.001:
+            tello.send_rc_control(0,0,0,0)
+        
+        forward_backward_velocity = int(left_right_velocity * (forward_backward_velocity / 20))  # Scale by left_right speed
+        if error_y < 0.001:
+            tello.send_rc_control(0,0,0,0)
 
-    # Add to error buffer
-    error_buffer.append((abs(error_x), abs(error_y)))
-    if len(error_buffer) > ALIGNMENT_WINDOW:
-        error_buffer.pop(0)
-
-    # Check if average error is small enough
-    if len(error_buffer) == ALIGNMENT_WINDOW:
-        avg_error_x = sum(e[0] for e in error_buffer) / ALIGNMENT_WINDOW
-        avg_error_y = sum(e[1] for e in error_buffer) / ALIGNMENT_WINDOW
-
-        # Alignment thresholds in pixels — tune this
-        if avg_error_x < 15 and avg_error_y < 15:
-            aligned = True
-
-    return left_right, forward_back, aligned
+    return left_right_velocity, forward_backward_velocity
