@@ -9,6 +9,16 @@ import numpy as np
 prev_error = 0
 integral = 0
 
+prev_error_x = 0
+prev_error_y = 0
+integral_x = 0
+integral_y = 0
+
+# Long term error
+error_buffer = []  # [(error_x, error_y), ...]
+ALIGNMENT_WINDOW = 30  # Number of frames to consider (~2 sec if running at 10Hz)
+
+
 # Gap locking
 locked_gap = None           # Stores (c1, c2) once locked
 gap_lock_timer = 0          # Counts stable frames
@@ -172,3 +182,56 @@ def navigate_to(current_pos, target_pos, yaw, threshold=10, speed_limit=30):
     left_right = int(rel_x * min(speed_limit, distance))
 
     return left_right, forward_back, False
+
+def align_target(target, telloCentre, dt):
+    global prev_error_x, prev_error_y, integral_x, integral_y, error_buffer
+
+    # Default commands
+    left_right = 0
+    forward_back = 0
+    aligned = False
+
+    # Error (positive = target is to the right/down)
+    error_x = target[0] - telloCentre[0]
+    error_y = telloCentre[1] - target[1]
+
+    # PID Constants
+    Kp = 0.25
+    Ki = 0.01
+    Kd = 0.1
+
+    # Integral
+    integral_x += error_x * dt
+    integral_y += error_y * dt
+
+    # Derivative
+    derivative_x = (error_x - prev_error_x) / dt if dt > 0 else 0
+    derivative_y = (error_y - prev_error_y) / dt if dt > 0 else 0
+
+    # PID Output
+    left_right = int(Kp * error_x + Ki * integral_x + Kd * derivative_x)
+    forward_back = int(Kp * error_y + Ki * integral_y + Kd * derivative_y)
+
+    # Clamp to safe range
+    left_right = max(-30, min(30, left_right))
+    forward_back = max(-30, min(30, forward_back))
+
+    # Update previous error
+    prev_error_x = error_x
+    prev_error_y = error_y
+
+    # Add to error buffer
+    error_buffer.append((abs(error_x), abs(error_y)))
+    if len(error_buffer) > ALIGNMENT_WINDOW:
+        error_buffer.pop(0)
+
+    # Check if average error is small enough
+    if len(error_buffer) == ALIGNMENT_WINDOW:
+        avg_error_x = sum(e[0] for e in error_buffer) / ALIGNMENT_WINDOW
+        avg_error_y = sum(e[1] for e in error_buffer) / ALIGNMENT_WINDOW
+
+        # Alignment thresholds in pixels — tune this
+        if avg_error_x < 15 and avg_error_y < 15:
+            aligned = True
+
+    return left_right, forward_back, aligned
