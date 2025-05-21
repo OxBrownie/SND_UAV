@@ -9,8 +9,8 @@ from TelloControl import *
 from ultralytics import YOLO
 import os
 from map import *
-from threading import Thread, Event, Lock
-
+from threading import Thread, Event
+import detect_person as dp
 
 ############### Initialise ###############
 # Directories
@@ -24,9 +24,6 @@ detectionWindow = 'HSV View'
 mapWindow = "Global View"
 
 # Modes
-states = ['STREAMONLY', 'MANUALFLY', 'COLOURCHASE', 
-          'STARTUP', 'OBSTACLE', 'SEEK', 'SEARCH',
-          'CAPTURE', 'HOME', 'LAND']
 STREAMONLY = 0
 MANUALFLY = 1
 COLOURCHASE = 2
@@ -48,17 +45,12 @@ YOLOMODE = 1
 
 # World Coordinates
 searchCoordinates = (0, 600)
+searchCoordinates = (0, 600)
 targetCoordinates = (None, None)
 landCoordinates = (250, 0)
 
 # Threading
 global stop_event, map_thread
-rc_state = {
-    'left_right': 0,
-    'forward_back': 0,
-    'last_update': time.time()
-}
-rc_lock = Lock()
 
 # Initialise objects
 model = YOLO("SearchUAV_V04.pt")
@@ -68,7 +60,7 @@ map = Map2D(search=searchCoordinates, land=landCoordinates)
 
 
 ############### User Define ###############
-RECORD = False
+RECORD = True
 NOFLY = False
 view = DRONE          # WEBCAM, DRONE
 ORIENTATION = 0
@@ -129,7 +121,7 @@ def start(view, mode):
         # Drone Connection
         tello.connect(True)
         time.sleep(2)
-        print(f'Mode: {states[mode]}, Battery: {tello.get_battery()}, Temperature: {tello.get_temperature()}')
+        print(f'Battery: {tello.get_battery()}, Temperature: {tello.get_temperature()}')
 
         # Camera direction
         if mode in [SEARCH, CAPTURE, LAND]:
@@ -161,7 +153,7 @@ def start(view, mode):
     ############### Threading ###############
     if thread and (view == DRONE):
         stop_event = Event()
-        map_thread = Thread(target=update_map_loop, args=(tello, map, stop_event, rc_state, rc_lock))
+        map_thread = Thread(target=update_map_loop, args=(tello, map, stop_event))
         map_thread.start()
 
 
@@ -175,8 +167,7 @@ def start(view, mode):
     waypoint_index = 0
     found = False
     inView = True
-    yaw_offset = 0
-    first = False
+    thresh_capture = 0
 
     # Loop
     while True:
@@ -252,6 +243,13 @@ def start(view, mode):
                     results = model.predict(source=frame, conf=0.1, verbose=False)
                     captureFrame, target = proc.YOLODetectTarget(model, results, frame.copy())
 
+            elif mode == CAPTURE:
+                if cvType == YOLOMODE:
+                    person = YOLO("stuff.pt")
+                    results = person.predict(source=frame, conf=0.5, verbose=False)
+                    proc = Processing(window_name="HSV view", mode=0) #need to fix
+                    captureFrame, centroids = proc.YOLODetectPoles(person, results,frame.copy())
+
             elif mode == HOME:
                 captureFrame = frame.copy()
 
@@ -312,8 +310,7 @@ def start(view, mode):
                 height = tello.get_height()
 
                 # State change
-                if (height < 35) and transit:
-                    print("############### STARTUP -> OBSTACLE ###############")
+                if height < 35:
                     mode = OBSTACLE
 
             elif mode == OBSTACLE:
@@ -322,10 +319,10 @@ def start(view, mode):
 
                 # Controls
                 left_right, forward_back, inView = navigate_through_poles(centroids, telloCentre, dt)
+                up_down = yawleft_right = 0
 
                 # State change
-                if (not inView) and transit:
-                    print("############### OBSTACLE -> SEEK ###############")
+                if not inView:
                     mode = SEEK
 
             elif mode == SEEK:
@@ -333,11 +330,10 @@ def start(view, mode):
                 drone_pos = map.getDrone()
 
                 # Controls
-                left_right, forward_back, reached = navigate_to(drone_pos, searchCoordinates, yaw, threshold=30, speed_limit=20)
+                left_right, forward_back, reached = navigate_to(drone_pos, searchCoordinates, yaw, threshold=10, speed_limit=20)
 
                 # State change
-                if reached and transit:
-                    print("############### SEEk -> SEARCH ###############")
+                if reached:
                     mode = SEARCH
 
                     # Switch Camera
@@ -351,35 +347,27 @@ def start(view, mode):
 
                 # Set Waypoints
                 waypoints = [(0, 100),   # 1m up
-                          (-100, 100),     # 1m left
-                          (-100, -100),     # 2m down
-                          (100, -100),      # 2m right
-                          (100, 100),      # 2m up
-                          (0, 100)]     # 1m left
+                          (-100, 0),     # 1m left
+                          (0, -200),     # 2m down
+                          (200, 0),      # 2m right
+                          (0, 200),      # 2m up
+                          (-100, 0)]     # 1m left
 
                 # Coordinates
                 drone_pos = map.getDrone()
+                waypoint = waypoints[waypoint_index]
 
-                if waypoint_index < len(waypoints):
-                    waypoint = waypoints[waypoint_index]
-                    waypoint = np.array(searchCoordinates)+np.array(waypoint)
-                    waypoint = tuple(waypoint)
-
-                    # Controls
-                    left_right, forward_back, reached = navigate_to(drone_pos, waypoint, yaw, threshold=10, speed_limit=20)
-                else:
-                    reached = True
+                # Controls
+                left_right, forward_back, reached = navigate_to(drone_pos, waypoint, yaw, threshold=10, speed_limit=20)
 
                 # Waypoint update
                 if reached:
-                    left_right = forward_back = 0
                     waypoint_index += 1
                     if waypoint_index >= len(waypoints):
                         left_right = forward_back = 0
                 
                 # State change
-                target = []
-                if (len(target) != 0) and transit:
+                if target is not []:
                     mode = CAPTURE
 
             elif mode == CAPTURE:
@@ -420,13 +408,8 @@ def start(view, mode):
             # Commands
             if fly:
                 # Get general state
-                print(f'Mode: {states[mode]}, Battery: {tello.get_battery()}, Temperature: {tello.get_temperature()}')
+                print(f'Battery: {tello.get_battery()}, Temperature: {tello.get_temperature()}')
 
-                # Thread lock
-                with rc_lock:
-                    rc_state['left_right'] = left_right
-                    rc_state['forward_back'] = forward_back
-                    rc_state['last_update'] = time.time()
                 # Send control
                 tello.send_rc_control(left_right, forward_back, up_down, yawleft_right)
 

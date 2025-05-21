@@ -5,7 +5,7 @@ import time
 
 
 ############### Threaded Update Position ###############
-def update_map_loop(tello, map, stop_event, rc_state, rc_lock):
+def update_map_loop(tello, map, stop_event):
     """
     Runs in a separate thread. Periodically updates drone position on the map.
     Uses manually scaled velocity from Tello state.
@@ -21,31 +21,30 @@ def update_map_loop(tello, map, stop_event, rc_state, rc_lock):
 
         try:
             ############### Tello Speeds ###############
-            with rc_lock:
-                vx = rc_state['left_right']
-                vy = rc_state['forward_back']
+            vx = tello.get_speed_x()  # forward speed
+            vy = tello.get_speed_y()  # lateral speed
 
-            # # Forward corrections
-            # if vx > 0:
-            #     vx *= -12.5
-            # else:
-            #     vx *= -17
+            # Forward corrections
+            if vx > 0:
+                vx *= 1
+            else:
+                vx *= 1
             
-            # # Lateral corrections
-            # if vy > 0:
-            #     vy *= 17
-            # else:
-            #     vy *= 17
+            # Lateral corrections
+            if vy > 0:
+                vy *= 1
+            else:
+                vy *= 1
 
             ############### Position Change ###############
             # Vertical change
-            dy = vy*dt
+            dy = vx*dt
 
             # Lateral change
-            dx = vx*dt
+            dx = vy*dt
 
             # Check
-            # print(f"[Velocity] vx: {vx}, vy: {vy} cm/s → dx: {dx:.1f}, dy: {dy:.1f} cm")
+            print(f"[Velocity] vx: {vx}, vy: {vy} cm/s → dx: {dx:.1f}, dy: {dy:.1f} cm")
 
             # Update position on map
             map.update_drone_position(dx=dx, dy=dy)
