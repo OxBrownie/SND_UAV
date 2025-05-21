@@ -223,7 +223,6 @@ def align_target(target, telloCentre, dt):
 
     return left_right, forward_back, aligned
 
-
 def setHeight(targetheight, droneheight):
     # Set limits
     lower_bound = targetheight - 10
@@ -236,5 +235,14 @@ def setHeight(targetheight, droneheight):
         return -15
     else:
         return 0
+
+def apply_deadband_decay(velocity, threshold=10, decay=0.5):
+    """
+    Adjusts a velocity to simulate Tello's deadband while allowing slow drift compensation.
+    If under threshold, decay its effect. If over, return as-is.
+    """
+    if abs(velocity) < threshold:
+        return int(velocity * decay)
+    return velocity
 
 

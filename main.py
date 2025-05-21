@@ -66,6 +66,17 @@ proc = Processing(window_name=detectionWindow, mode=OBSTACLE)
 tello = Tello()
 map = Map2D(search=searchCoordinates, land=landCoordinates)
 
+# Buffers
+SEARCH_BUFFER = 0
+LOST_BUFFER = 0
+CAPTURE_BUFFER = 0
+HOME_BUFFER = 0
+LAND_BUFFER = 0
+
+# Drift scaling
+MANUAL = 0
+DEADBAND = 1
+
 
 ############### User Define ###############
 RECORD = False
@@ -77,12 +88,7 @@ cvType = YOLOMODE     # CUSTOMMODE, YOLOMODE
 thread = True
 transit = True
 camera_switch = True
-SEARCH_BUFFER = 0
-LOST_BUFFER = 0
-CAPTURE_BUFFER = 0
-HOME_BUFFER = 0
-LAND_BUFFER = 0
-
+scale = MANUAL
 
 ############### Runtime ###############
 def start(view, mode):
@@ -519,36 +525,44 @@ def start(view, mode):
 
                 # Thread lock
                 with rc_lock:
-                    if mode == OBSTACLE:
-                        if left_right > 0:
+                    if scale == MANUAL:
+                        if mode == OBSTACLE:
+                            if left_right > 0:
+                                scale_x  = 1
+                            else:
+                                scale_x = 0.9
+                            scale_y = 0.5
+                        elif mode == SEEK:
+                            scale_x  = 0.45
+                            scale_y = 1.95
+                        elif mode == HOME:
+                            scale_x = 1.05
+                            if forward_back < 0:
+                                scale_y = 1.4
+                        elif mode == SEARCH:
                             scale_x  = 1
+                            scale_y = 1
+                        elif mode in [CAPTURE, LAND]:
+                            scale_x  = 0
+                            scale_y = 0
                         else:
-                            scale_x = 0.9
-                        scale_y = 0.5
-                    elif mode == SEEK:
-                        scale_x  = 0.45
-                        scale_y = 1.95
-                    elif mode == HOME:
-                        scale_x = 1.05
-                        if forward_back < 0:
-                            scale_y = 1.4
-                    elif mode == SEARCH:
-                        scale_x  = 1
-                        scale_y = 1
-                    elif mode in [CAPTURE, LAND]:
-                        scale_x  = 0
-                        scale_y = 0
-                    else:
-                        scale_x  = 1
-                        scale_y = 1
+                            scale_x  = 1
+                            scale_y = 1
 
-                    rc_state['left_right'] = left_right*scale_x
-                    rc_state['forward_back'] = forward_back*scale_y
+                        rc_state['left_right'] = left_right*scale_x
+                        rc_state['forward_back'] = forward_back*scale_y
+                    
+                    elif scale == DEADBAND:
+                        rc_state['left_right'] = apply_deadband_decay(left_right, 10, 0.5)
+                        rc_state['forward_back'] = apply_deadband_decay(forward_back, 10, 0.5)
+
+                    else:
+                        rc_state['left_right'] = left_right
+                        rc_state['forward_back'] = forward_back
                     rc_state['last_update'] = time.time()
 
-                # Send control
-                # if mode == OBSTACLE:
-                #     left_right += 5
+
+                # Send command
                 tello.send_rc_control(left_right, forward_back, up_down, yawleft_right)
             
             else:
