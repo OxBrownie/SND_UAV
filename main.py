@@ -76,7 +76,7 @@ mode = STARTUP       # Manually fix mode
 cvType = YOLOMODE     # CUSTOMMODE, YOLOMODE
 thread = True
 transit = True
-switch = False
+camera_switch = False
 
 
 ############### Runtime ###############
@@ -128,7 +128,7 @@ def start(view, mode):
     elif view == DRONE:
         # Drone Connection
         tello.connect(True)
-        time.sleep(2)
+        time.sleep(1)
         print(f'Mode: {states[mode]}, Battery: {tello.get_battery()}, Temperature: {tello.get_temperature()}')
 
         # Camera direction
@@ -175,7 +175,6 @@ def start(view, mode):
     waypoint_index = 0
     found = False
     inView = True
-    yaw_offset = 0
     first = False
 
     # Loop
@@ -227,9 +226,12 @@ def start(view, mode):
                 captureFrame, centroids = proc.objectDetect(detectFrame, frame.copy())
 
             # Active modes 
+            ############### Start Up ###############
             if mode == STARTUP:
                 captureFrame = frame.copy()
                 
+            
+            ############### Obstacle ###############
             elif mode == OBSTACLE:
                 if cvType == CUSTOMMODE:
                     detectFrame = proc.getPoleMask(detectFrame)
@@ -239,22 +241,33 @@ def start(view, mode):
                     results = model.predict(source=frame, conf=0.1, verbose=False)
                     captureFrame, centroids = proc.YOLODetectPoles(model, results, frame.copy())
             
+
+            ############### Seek ###############
             elif mode == SEEK:
                 captureFrame = frame.copy()
 
+
+            ############### Search ###############
             elif mode == SEARCH:
                 if cvType == YOLOMODE:
                     results = model.predict(source=frame, conf=0.1, verbose=False)
                     captureFrame, target = proc.YOLODetectTarget(model, results, frame.copy())
 
+
+            ############### Capture ###############
             elif mode == CAPTURE:
                 if cvType == YOLOMODE:
                     results = model.predict(source=frame, conf=0.1, verbose=False)
                     captureFrame, target = proc.YOLODetectTarget(model, results, frame.copy())
 
+ 
+            ############### Home ###############
             elif mode == HOME:
                 captureFrame = frame.copy()
 
+
+            ############### Land ###############
+            # TODO
             elif mode == LAND:
                 if cvType == YOLOMODE:
                     results = model.predict(source=frame, conf=0.1, verbose=False)
@@ -291,7 +304,7 @@ def start(view, mode):
 
             ############### Mode Execution ###############
             # Initialise
-            telloCentre = (frame.shape[1] // 2, frame.shape[0] // 2 )
+            telloCentre = (frame.shape[1] // 2, frame.shape[0] // 2)
             left_right = forward_back = up_down = yawleft_right = 0
 
             # Non-active modes
@@ -307,6 +320,7 @@ def start(view, mode):
                 left_right, forward_back, up_down, yawleft_right = chase(centroids, telloCentre)
             
             # Active Modes
+            ############### Start Up ###############
             if mode == STARTUP:
                 up_down = -20
                 height = tello.get_height()
@@ -316,11 +330,14 @@ def start(view, mode):
                     print("############### STARTUP -> OBSTACLE ###############")
                     mode = OBSTACLE
 
+
+            ############### Obstacle ###############
             elif mode == OBSTACLE:
                 # Prints
                 if detectWindow: proc.printHSV()
 
                 # Controls
+                # TODO: Make simpler
                 left_right, forward_back, inView = navigate_through_poles(centroids, telloCentre, dt)
 
                 # State change
@@ -328,6 +345,8 @@ def start(view, mode):
                     print("############### OBSTACLE -> SEEK ###############")
                     mode = SEEK
 
+
+            ############### Seek ###############
             elif mode == SEEK:
                 # Current position
                 drone_pos = map.getDrone()
@@ -337,14 +356,16 @@ def start(view, mode):
 
                 # State change
                 if reached and transit:
-                    print("############### SEEk -> SEARCH ###############")
+                    print("############### SEEK -> SEARCH ###############")
                     mode = SEARCH
 
                     # Switch Camera
-                    if switch:
+                    if camera_switch:
                         ORIENTATION = 1
                         tello.set_video_direction(ORIENTATION)
 
+
+            ############### SEARCH ###############
             elif mode == SEARCH:
                 # Print
                 print(f"Waypoint: {waypoint_index}")
@@ -368,20 +389,23 @@ def start(view, mode):
                     # Controls
                     left_right, forward_back, reached = navigate_to(drone_pos, waypoint, yaw, threshold=10, speed_limit=20)
                 else:
-                    reached = True
+                    waypoint = 1
+                    reached = False
 
                 # Waypoint update
                 if reached:
                     left_right = forward_back = 0
                     waypoint_index += 1
+                    reached = False
                     if waypoint_index >= len(waypoints):
                         left_right = forward_back = 0
                 
                 # State change
-                target = []
                 if (len(target) != 0) and transit:
                     mode = CAPTURE
 
+
+            ############### Capture ###############
             elif mode == CAPTURE:
                 if len(target) != 0:
                     left_right, forward_back, aligned = align_target(target, telloCentre, dt)
@@ -401,6 +425,8 @@ def start(view, mode):
                     # Change
                     mode = HOME
 
+
+            ############### Home ###############
             elif mode == HOME:
                 # Current position
                 drone_pos = map.getDrone()
@@ -412,12 +438,14 @@ def start(view, mode):
                 if reached:
                     mode = LAND
 
+            ############### Land ###############
             elif mode == LAND:
                 up_down = -20
                 if len(target) != 0:
                     left_right, forward_back, aligned = align_target(target, telloCentre, dt)
 
-            # Commands
+            
+            ############### Commands ###############
             if fly:
                 # Get general state
                 print(f'Mode: {states[mode]}, Battery: {tello.get_battery()}, Temperature: {tello.get_temperature()}')
@@ -427,6 +455,7 @@ def start(view, mode):
                     rc_state['left_right'] = left_right
                     rc_state['forward_back'] = forward_back
                     rc_state['last_update'] = time.time()
+                    
                 # Send control
                 tello.send_rc_control(left_right, forward_back, up_down, yawleft_right)
 
