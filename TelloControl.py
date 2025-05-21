@@ -77,7 +77,7 @@ def navigate_through_poles(centroids, telloCentre, dt):
     global locked_gap, gap_lock_timer, smoothed_output
 
     # PID constants
-    Kp = 0.0001   # Reduce P gain to prevent overshooting
+    Kp = 0.01   # Reduce P gain to prevent overshooting
     Ki = 0.005  # Small I gain to prevent drifting
     Kd = 0.05   # Reduce D gain to smooth movements
 
@@ -192,8 +192,8 @@ def align_target(target, telloCentre, dt):
     aligned = False
 
     # Error (positive = target is to the right/down)
-    error_x = target[0] - telloCentre[0]
-    error_y = telloCentre[1] - target[1]
+    error_x = target[0][0] - telloCentre[0]
+    error_y = target[0][1] - telloCentre[1]
 
     # PID Constants
     Kp = 0.25

@@ -397,14 +397,15 @@ class Processing:
         # Extract boxes and get centroids
         for r in results:
             for box in r.boxes:
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                conf = float(box.conf[0])
-                cls = int(box.cls[0])
                 label = model.names[cls]
-                cx = (x1 + x2) // 2
-                cy = (y1 + y2) // 2
-                area = abs((x2 - x1) * (y2 - y1))
-                target_boxes.append(((cx, cy), (x1, y1, x2, y2), conf, label, area))
+                if label == 'Target':
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    conf = float(box.conf[0])
+                    cls = int(box.cls[0])
+                    cx = (x1 + x2) // 2
+                    cy = (y1 + y2) // 2
+                    area = abs((x2 - x1) * (y2 - y1))
+                    target_boxes.append(((cx, cy), (x1, y1, x2, y2), conf, label, area))
 
         
         ############### Bounding Boxes ###############

@@ -16,6 +16,7 @@ from threading import Thread, Event, Lock
 # Directories
 mainDir = os.getcwd()
 recordingDir = os.path.join(mainDir, "Recordings")
+captureDir = os.path.join(mainDir, "Capture")
 
 # Window Names
 captureWindow = 'Stream View'
@@ -46,7 +47,7 @@ CUSTOMMODE = 0
 YOLOMODE = 1
 
 # World Coordinates
-searchCoordinates = (0, 200)
+searchCoordinates = (0, 600)
 targetCoordinates = (None, None)
 landCoordinates = (250, 0)
 
@@ -70,10 +71,12 @@ map = Map2D(search=searchCoordinates, land=landCoordinates)
 RECORD = False
 NOFLY = False
 view = DRONE          # WEBCAM, DRONE
-mode = SEARCH       # Manually fix mode
+ORIENTATION = 0
+mode = STARTUP       # Manually fix mode
 cvType = YOLOMODE     # CUSTOMMODE, YOLOMODE
 thread = True
 transit = True
+switch = False
 
 
 ############### Runtime ###############
@@ -128,22 +131,26 @@ def start(view, mode):
         time.sleep(2)
         print(f'Mode: {states[mode]}, Battery: {tello.get_battery()}, Temperature: {tello.get_temperature()}')
 
-        # # Camera direction
-        # if mode == SEARCH or mode == LAND:
-        #     tello.set_video_direction(0)
-        # else:
-        #     tello.set_video_direction(0)
+        # Camera direction
+        if mode in [SEARCH, CAPTURE, LAND]:
+            ORIENTATION = 1   
+        else:
+            ORIENTATION = 0
+        tello.set_video_direction(ORIENTATION)
+        time.sleep(1)
             
         # Start drone stream
         tello.streamon()
+        time.sleep(1)
 
-        # Fly
+
+        ############### Take Off ###############
         if (mode == STREAMONLY) or NOFLY:
             fly = False
         else:
             fly = True
         print(f"Fly status: {fly}")
-        time.sleep(2)
+        time.sleep(1)
 
         if fly:
             tello.send_rc_control(0, 0, 0, 0)
@@ -189,7 +196,7 @@ def start(view, mode):
             ############### Frame ###############
             # Webcam
             if view == WEBCAM:
-                ret, frame = cap.read()
+                frame = cap.read()
 
             # Drone
             elif view == DRONE:
@@ -197,7 +204,10 @@ def start(view, mode):
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             
             # Resize
-            frame = cv2.resize(frame, (640, 480))
+            if ORIENTATION == 0:
+                frame = cv2.resize(frame, (640, 480))
+            else:
+                frame = frame[0:240, 0:320]
 
 
             ############### Processing ###############
@@ -233,10 +243,9 @@ def start(view, mode):
                 captureFrame = frame.copy()
 
             elif mode == SEARCH:
-                captureFrame = frame.copy()
-                # if cvType == YOLOMODE:
-                #     results = model.predict(source=frame, conf=0.1, verbose=False)
-                #     captureFrame, target = proc.YOLODetectTarget(model, results, frame.copy())
+                if cvType == YOLOMODE:
+                    results = model.predict(source=frame, conf=0.1, verbose=False)
+                    captureFrame, target = proc.YOLODetectTarget(model, results, frame.copy())
 
             elif mode == CAPTURE:
                 if cvType == YOLOMODE:
@@ -252,11 +261,10 @@ def start(view, mode):
                     captureFrame, LZ = proc.YOLODetectTarget(model, results, frame.copy())
 
 
+            ############### Show Frames ###############
             # Draw buttons
             if detectWindow: proc.draw_buttons(detectFrame)
 
-
-            ############### Show Frames ###############
             # Object detect
             if detectWindow:
                 cv2.imshow(detectionWindow, detectFrame)
@@ -267,16 +275,8 @@ def start(view, mode):
             # Map
             if fly:
                 if thread:
-                    # yaw = tello.get_yaw()
-                    # yaw = np.radians(yaw)
-
-                    # if not first:
-                    #     yaw_offset = -yaw
-                    #     first = False
-                    # else:
-                    #     yaw += yaw_offset
-                    yaw = 0
-                    map_frame = map.draw(yaw=0)
+                    yaw = 0 # Never rotate the drone
+                    map_frame = map.draw(yaw=yaw)
                     cv2.imshow(mapWindow, map_frame)
                 
 
@@ -340,6 +340,11 @@ def start(view, mode):
                     print("############### SEEk -> SEARCH ###############")
                     mode = SEARCH
 
+                    # Switch Camera
+                    if switch:
+                        ORIENTATION = 1
+                        tello.set_video_direction(ORIENTATION)
+
             elif mode == SEARCH:
                 # Print
                 print(f"Waypoint: {waypoint_index}")
@@ -378,15 +383,22 @@ def start(view, mode):
                     mode = CAPTURE
 
             elif mode == CAPTURE:
-                if target is not []:
+                if len(target) != 0:
                     left_right, forward_back, aligned = align_target(target, telloCentre, dt)
                 else:
                     aligned = False
+
                 # State change
                 if aligned and transit:
-                    # Take picture
+                    # Get coordinates
+                    drone_pos = map.getDrone()
+                    print(drone_pos)
 
-                    # Update coordinates on map or print
+                    # Take picture
+                    frameCapture = os.path.join(captureDir, f"FOUND_{drone_pos}.jpg")
+                    cv2.imwrite(frameCapture, captureFrame)
+
+                    # Change
                     mode = HOME
 
             elif mode == HOME:
@@ -401,8 +413,9 @@ def start(view, mode):
                     mode = LAND
 
             elif mode == LAND:
-                pass
-                # TODO: Land
+                up_down = -20
+                if len(target) != 0:
+                    left_right, forward_back, aligned = align_target(target, telloCentre, dt)
 
             # Commands
             if fly:
