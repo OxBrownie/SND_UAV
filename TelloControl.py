@@ -9,6 +9,16 @@ import numpy as np
 prev_error = 0
 integral = 0
 
+prev_error_x = 0
+prev_error_y = 0
+integral_x = 0
+integral_y = 0
+
+# Long term error
+error_buffer = []  # [(error_x, error_y), ...]
+ALIGNMENT_WINDOW = 30  # Number of frames to consider (~2 sec if running at 10Hz)
+
+
 # Gap locking
 locked_gap = None           # Stores (c1, c2) once locked
 gap_lock_timer = 0          # Counts stable frames
