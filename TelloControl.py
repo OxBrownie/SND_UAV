@@ -20,13 +20,8 @@ ALIGNMENT_WINDOW = 30  # Number of frames to consider (~2 sec if running at 10Hz
 
 
 # Gap locking
-locked_gap = None           # Stores (c1, c2) once locked
-gap_lock_timer = 0          # Counts stable frames
-GAP_LOCK_DURATION = 5       # Lock duration in frames
-
-# Temporal smoothing
-smoothed_output = 0         # For temporal smoothing
-SMOOTH_ALPHA = 0.6          # Weight for exponential smoothing
+locked_centroids = None
+lock_frames_remaining = 0
 
 
 def chase(centroids, telloC):
@@ -72,49 +67,48 @@ def chase(centroids, telloC):
   
 def navigate_through_poles(centroids, telloCentre, dt):
     ############### Initialise ###############
-    # PID
     global prev_error, integral
-    global locked_gap, gap_lock_timer, smoothed_output
+    global locked_centroids, lock_frames_remaining
 
     # PID constants
-    Kp = 0.01   # Reduce P gain to prevent overshooting
-    Ki = 0.005  # Small I gain to prevent drifting
-    Kd = 0.05   # Reduce D gain to smooth movements
+    Kp = 0.005
+    Ki = 0.005
+    Kd = 0.07
 
-    # Default velocity
+    # Default velocities
     left_right = 0
     forward_back = 15
 
     # Frame centre
-    mid_x, mid_y = telloCentre  
+    mid_x, mid_y = telloCentre
 
-
-    ############### Two Pole Thread ###############
+    ############### Two Poles ###############
     if len(centroids) >= 2:
-        # Locked gap
-        if gap_lock_timer > 0 and locked_gap is not None:
-            c1, c2 = locked_gap
-            gap_lock_timer -= 1
-
-        # Lock to new pair
+        # Update lock if expired
+        if lock_frames_remaining == 0:
+            locked_centroids = (centroids[0], centroids[1])
+            lock_frames_remaining = 5
         else:
-            c1, c2 = centroids[0], centroids[1]
-            locked_gap = (c1, c2)
-            gap_lock_timer = GAP_LOCK_DURATION
+            lock_frames_remaining -= 1
 
-        # Get target
+        c1, c2 = locked_centroids
         target_x = (c1[0] + c2[0]) / 2
         error = target_x - mid_x
+        sign = np.sign(error)
 
-        # PID Control
+        # PID control
         integral += error * dt
         derivative = (error - prev_error) / dt if dt > 0 else 0
-        raw_output = Kp * error + Ki * integral + Kd * derivative
         prev_error = error
 
-        # Temporal smoothing response
-        smoothed_output = SMOOTH_ALPHA * smoothed_output + (1 - SMOOTH_ALPHA) * raw_output
-        left_right = int(smoothed_output)
+        # if abs(error) < 5:
+        #     output = 0
+        # else:
+        output = Kp * error + Ki * integral + Kd * derivative
+
+        # Apply PID output
+        # left_right = int(output)
+        left_right = int(np.clip(sign * output, -40, 40))
 
         # Flag
         inView = True
@@ -122,42 +116,34 @@ def navigate_through_poles(centroids, telloCentre, dt):
 
     ############### Single Pole Avoidance ###############
     elif len(centroids) == 1:
-        # New speed
         forward_back = 10
 
-        # Initialise 
         pole_x = centroids[0][0]
         error = mid_x - pole_x
         sign = np.sign(error)
         abs_error = max(abs(error), 10)
 
-        # Inverse proportional Gain
-        k = 1
+        # Inverse proportional gain
+        k = 1500
         output = k / abs_error
+        left_right = int(np.clip(sign * output, -25, 25))
 
-        # Response
-        left_right = int(np.clip(sign * output, -20, 20))
-
-        # Reset lock
-        gap_lock_timer = 0
-        locked_gap = None
-        smoothed_output = 0
+        # Reset PID
+        prev_error = 0
+        integral = 0
 
         # Flag
         inView = True
 
-
     ############### No Poles ###############
     else:
-        # Response
-        forward_back = left_right = 0
+        left_right = forward_back = 0
 
-        # Reset lock
-        gap_lock_timer = 0
-        locked_gap = None
-        smoothed_output = 0
+        # Reset PID
+        prev_error = 0
+        integral = 0
 
-        # Flag finish
+        # Flag
         inView = False
 
     return left_right, forward_back, inView
@@ -191,14 +177,18 @@ def align_target(target, telloCentre, dt):
     forward_back = 0
     aligned = False
 
-    # Error (positive = target is to the right/down)
-    error_x = target[0][0] - telloCentre[0]
-    error_y = target[0][1] - telloCentre[1]
+    # Extract coordinates
+    target_x, target_y = target[0]
+    mid_x, mid_y = telloCentre
 
-    # PID Constants
-    Kp = 0.25
+    # Calculate errors
+    error_x = target_x - mid_x  # → strafe
+    error_y = mid_y - target_y  # → move forward/back (flipped for image frame)
+
+    # PID Constants — for slow, smooth motion
+    Kp = 0.1
     Ki = 0.01
-    Kd = 0.1
+    Kd = 0.03
 
     # Integral
     integral_x += error_x * dt
@@ -213,25 +203,38 @@ def align_target(target, telloCentre, dt):
     forward_back = int(Kp * error_y + Ki * integral_y + Kd * derivative_y)
 
     # Clamp to safe range
-    left_right = max(-30, min(30, left_right))
-    forward_back = max(-30, min(30, forward_back))
+    left_right = max(-20, min(20, left_right))
+    forward_back = max(-20, min(20, forward_back))
 
     # Update previous error
     prev_error_x = error_x
     prev_error_y = error_y
 
-    # Add to error buffer
-    error_buffer.append((abs(error_x), abs(error_y)))
-    if len(error_buffer) > ALIGNMENT_WINDOW:
-        error_buffer.pop(0)
+    print(f"error: {error_x}, {error_y}")
+    if (abs(error_x) <= 40) and (abs(error_y) <= 40):
+        aligned = True
 
-    # Check if average error is small enough
-    if len(error_buffer) == ALIGNMENT_WINDOW:
-        avg_error_x = sum(e[0] for e in error_buffer) / ALIGNMENT_WINDOW
-        avg_error_y = sum(e[1] for e in error_buffer) / ALIGNMENT_WINDOW
+    # Apply minimum RC output threshold if error is still meaningful
+    if abs(error_x) > 35 and abs(left_right) < 10:
+        left_right = int(10 * np.sign(left_right))
 
-        # Alignment thresholds in pixels — tune this
-        if avg_error_x < 15 and avg_error_y < 15:
-            aligned = True
+    if abs(error_y) > 35 and abs(forward_back) < 10:
+        forward_back = int(10 * np.sign(forward_back))
 
     return left_right, forward_back, aligned
+
+
+def setHeight(targetheight, droneheight):
+    # Set limits
+    lower_bound = targetheight - 10
+    upper_bound = targetheight + 10
+
+    # up_down velocity
+    if droneheight < lower_bound:
+        return 15
+    elif droneheight > upper_bound:
+        return -15
+    else:
+        return 0
+
+

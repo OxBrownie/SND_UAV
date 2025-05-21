@@ -331,10 +331,13 @@ class Processing:
                 conf = float(box.conf[0])
                 cls = int(box.cls[0])
                 label = model.names[cls]
-                cx = (x1 + x2) // 2
-                cy = (y1 + y2) // 2
-                area = abs((x2 - x1) * (y2 - y1))
-                centroid_boxes.append(((cx, cy), (x1, y1, x2, y2), conf, label, area))
+                width = x2 - x1
+                height = y2 - y1
+                if (label == "Pole") and (height > width):
+                    cx = (x1 + x2) // 2
+                    cy = (y1 + y2) // 2
+                    area = abs((x2 - x1) * (y2 - y1))
+                    centroid_boxes.append(((cx, cy), (x1, y1, x2, y2), conf, label, area))
 
 
         ############### Get Gap ###############
@@ -397,11 +400,11 @@ class Processing:
         # Extract boxes and get centroids
         for r in results:
             for box in r.boxes:
+                cls = int(box.cls[0])
                 label = model.names[cls]
                 if label == 'Target':
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     conf = float(box.conf[0])
-                    cls = int(box.cls[0])
                     cx = (x1 + x2) // 2
                     cy = (y1 + y2) // 2
                     area = abs((x2 - x1) * (y2 - y1))
@@ -423,3 +426,41 @@ class Processing:
             targets.append(centroid)
 
         return frame, targets
+
+    def detectLZ(self, frame):
+        ############### Initialise ###############
+        LZ = []
+
+        # Convert to HSV
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+        # Threshold for white (adjust if needed)
+        lower_white = np.array([0, 0, 200])
+        upper_white = np.array([179, 60, 255])
+        mask = cv2.inRange(hsv, lower_white, upper_white)
+
+        # Clean the mask
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=2)
+
+        # Find contours
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+        # Draw bounding box around largest contour
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area > 1000:
+                x, y, w, h = cv2.boundingRect(cnt)
+                cx = x + w // 2
+                cy = y + h // 2
+                LZ.append((cx, cy))
+
+                # Annotate on frame
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 255), 2)
+                cv2.circle(frame, (cx, cy), 4, (255, 0, 0), -1)
+                cv2.putText(frame, "LZ", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                break  # Only process the largest one
+
+        return frame, LZ
