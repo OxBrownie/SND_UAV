@@ -79,7 +79,7 @@ DEADBAND = 1
 
 
 ############### User Define ###############
-RECORD = False
+RECORD = True
 NOFLY = False
 view = DRONE          # WEBCAM, DRONE
 ORIENTATION = 0
@@ -88,12 +88,12 @@ cvType = YOLOMODE     # CUSTOMMODE, YOLOMODE
 thread = True
 transit = True
 camera_switch = True
-scale = MANUAL
+scale = DEADBAND
 
 ############### Runtime ###############
 def start(view, mode):
     """ Start Tello Drone """
-    # Global variables
+    # Global variables, buffers
     global SEARCH_BUFFER, LOST_BUFFER, CAPTURE_BUFFER, HOME_BUFFER, LAND_BUFFER
 
 
@@ -188,9 +188,7 @@ def start(view, mode):
     target = []
     LZ = []
     waypoint_index = 0
-    found = False
     inView = True
-    first = False
 
     # Loop
     while True:
@@ -241,7 +239,8 @@ def start(view, mode):
             elif mode == COLOURCHASE:
                 captureFrame, centroids = proc.objectDetect(detectFrame, frame.copy())
 
-            # Active modes 
+            
+            ############### Active Modes ###############
             ############### Start Up ###############
             if mode == STARTUP:
                 captureFrame = frame.copy()
@@ -332,7 +331,8 @@ def start(view, mode):
                 # Controls
                 left_right, forward_back, up_down, yawleft_right = chase(centroids, telloCentre)
             
-            # Active Modes
+
+            ############### Active Modes ###############
             ############### Start Up ###############
             if mode == STARTUP:
                 up_down = -15
@@ -390,26 +390,25 @@ def start(view, mode):
 
                 # Set Waypoints
                 print(f"Waypoint: {waypoint_index}")
-                waypoints = [(0, 100),   # 1m up
+                waypoints = [(0, 100),     # 1m up
                           (-100, 100),     # 1m left
-                          (-100, -100),     # 2m down
-                          (100, -100),      # 2m right
+                          (-100, -100),    # 2m down
+                          (100, -100),     # 2m right
                           (100, 100),      # 2m up
-                          (0, 100)]     # 1m left
+                          (0, 100)]        # 1m left
 
                 # Coordinates
                 drone_pos = map.getDrone()
 
                 if waypoint_index < len(waypoints):
                     waypoint = waypoints[waypoint_index]
-                    waypoint = np.array(searchCoordinates)+np.array(waypoint)
 
+                    # Waypoint relative to __
+                    waypoint = np.array(searchCoordinates)+np.array(waypoint)
                     waypoint = tuple(waypoint)
 
                     # Controls
-                    left_right, forward_back, reached = navigate_to(drone_pos, waypoint, yaw, threshold=10, speed_limit=30)
-                else:
-                    mode = HOME
+                    left_right, forward_back, reached = navigate_to(drone_pos, waypoint, yaw, threshold=10, speed_limit=10)
 
                 # Waypoint update
                 if reached:
@@ -493,6 +492,7 @@ def start(view, mode):
                 #     print("LAND NOW")
                 #     mode = LAND
 
+
             ############### Land ###############
             elif mode == LAND:
                 # Align
@@ -522,6 +522,9 @@ def start(view, mode):
             if fly:
                 # Get general state
                 print(f'Mode: {states[mode]}, Battery: {tello.get_battery()}, Temperature: {tello.get_temperature()}')
+
+                # Send command
+                tello.send_rc_control(left_right, forward_back, up_down, yawleft_right)
 
                 # Thread lock
                 with rc_lock:
@@ -553,19 +556,21 @@ def start(view, mode):
                         rc_state['forward_back'] = forward_back*scale_y
                     
                     elif scale == DEADBAND:
-                        rc_state['left_right'] = apply_deadband_decay(left_right, 10, 0.5)
-                        rc_state['forward_back'] = apply_deadband_decay(forward_back, 10, 0.5)
+                        if mode in [STARTUP, CAPTURE, LAND]:
+                            rc_state['left_right'] = 0
+                            rc_state['forward_back'] = 0
+                        else:
+                            rc_state['left_right'] = apply_deadband_decay(left_right, 6, 0.5)
+                            rc_state['forward_back'] = apply_deadband_decay(forward_back, 10, 0.3)
 
                     else:
                         rc_state['left_right'] = left_right
                         rc_state['forward_back'] = forward_back
+                    
                     rc_state['last_update'] = time.time()
-
-
-                # Send command
-                tello.send_rc_control(left_right, forward_back, up_down, yawleft_right)
             
             else:
+                # No flight, log to terminal
                 print(f"Controls: {[left_right, forward_back, up_down, yawleft_right]}")
     
 
