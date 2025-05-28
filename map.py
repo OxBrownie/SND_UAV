@@ -10,66 +10,67 @@ def update_map_loop(tello, map, stop_event, rc_state, rc_lock):
     Runs in a separate thread. Periodically updates drone position on the map.
     Uses manually scaled velocity from Tello state.
     """
+
+
+    ############### Initiate Variables ###############
+    # Timing
     update_interval = 0.1  # 10 Hz
     last_time = time.time()
 
+
     ############### Map Loop ###############
     while not stop_event.is_set():
+        # Loop time
         current_time = time.time()
         dt = current_time - last_time
         last_time = current_time
 
         try:
-            ############### Tello Speeds ###############
+            ############### Drone Speeds ###############
             with rc_lock:
                 vx = rc_state['left_right']
                 vy = rc_state['forward_back']
 
-            # # Forward corrections
-            # if vx > 0:
-            #     vx *= -12.5
-            # else:
-            #     vx *= -17
-            
-            # # Lateral corrections
-            # if vy > 0:
-            #     vy *= 17
-            # else:
-            #     vy *= 17
 
             ############### Position Change ###############
-            # Vertical change
-            dy = vy*dt
+            dy = vy*dt # Vertical change
+            dx = vx*dt # Lateral change
 
-            # Lateral change
-            dx = vx*dt
-
-            # Check
+            # Check. Printed out to declutter terminal
             # print(f"[Velocity] vx: {vx}, vy: {vy} cm/s → dx: {dx:.1f}, dy: {dy:.1f} cm")
 
             # Update position on map
             map.update_drone_position(dx=dx, dy=dy)
 
+        # Failed to get
         except Exception as e:
-            print("Manual update failed:", e)
+            print("Drone update fail:", e)
 
+
+        ############### Loop dt ###############
         time.sleep(update_interval)
 
 
 ############### World Map ###############
 class Map2D:
     def __init__(self, size=(1500, 1500), search=None, land=None):
+        ############### General ###############
+        # Map Size
         self.size = size
         self.map = np.ones((size[1], size[0], 3), dtype=np.uint8) * 255
+        self.scale = 1 # Scaling px:cm
 
-        self.scale = 1
+        # Coordinates
         self.center = (size[0] // 2, size[1] // 2)
         self.drone_pos = self.center
         self.drone_pos_cm = (0.0, 0.0)
-        self.path = [self.drone_pos]
-        self.direction = 0
 
-        # Takeoff position
+        # Path and direction
+        self.path = [self.drone_pos]
+        self.direction = 0 # Never change orientation
+
+        ############### Markers ###############
+        # Take off
         cv2.rectangle(self.map,
                     (self.center[0] - 5, self.center[1] - 5),
                     (self.center[0] + 5, self.center[1] + 5),
@@ -95,42 +96,56 @@ class Map2D:
                         (0, 0, 0), -1)
             cv2.putText(self.map, "Land", (lx + 10, ly + 5),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
-            
+    
+
+    ############### Functions ###############
+    # cm to px converter
     def cm_to_px(self, x_cm, y_cm):
             x_px = int(self.center[0] + x_cm * self.scale)
             y_px = int(self.center[1] - y_cm * self.scale)
             return (x_px, y_px)
 
-
+    # Drone position
     def update_drone_position(self, dx, dy):
         x_cm, y_cm = self.drone_pos_cm
         self.drone_pos_cm = (x_cm + dx, y_cm + dy)
         px_pos = self.cm_to_px(*self.drone_pos_cm)
         self.path.append(px_pos)
 
+    # Unused
     def set_position(self, pos_cm):
         self.drone_pos_cm = pos_cm
         px_pos = self.cm_to_px(*self.drone_pos_cm)
         self.path.append(px_pos)
 
+    # Unused
     def get_position(self):
         return self.drone_pos_cm
 
+    # Get drone coordinates
     def getDrone(self):
         return self.drone_pos_cm
 
+    # Draw map
     def draw(self, yaw=0):
+        """
+        Responsible for updating the map by drawing all features including
+        routing, markers and updates (TODO: Mark target found coordinates).
+        """
+
+        # Copy from previous instance
         display = self.map.copy()
 
         # Drone path
         for i in range(1, len(self.path)):
             pt1 = tuple(map(int, self.path[i - 1]))
             pt2 = tuple(map(int, self.path[i]))
-            cv2.line(display, pt1, pt2, (255, 0, 0), 2)
+            cv2.line(display, pt1, pt2, (255, 0, 0), 2) 
 
+        # New position
         x_px, y_px = self.cm_to_px(*self.drone_pos_cm)
 
-        # Triangle drone shape
+        # Triangle drone item. Working with yaw, but yaw no longer a factor
         self.direction += yaw
         size = 20
         tip_x = x_px + size * np.sin(yaw)

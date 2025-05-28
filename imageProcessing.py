@@ -76,12 +76,10 @@ class Processing:
         threshold = cv2.inRange(hsv, (self.low_H, self.low_S, self.low_V), (self.high_H, self.high_S, self.high_V))
         return threshold
     
-    # Apply pole HSV defaults
+    
+    ############### HSV Filter (Poles) ###############
     def poleHSV(self):
         """ Apply HSV filtering to detect white colors (poles) """
-
-        # Convert to HSV color space
-        # hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
         # Set pole preset colours
         self.low_H = self.polePrest["low_H"]
@@ -98,11 +96,6 @@ class Processing:
         cv2.setTrackbarPos("High S", self.window_name, self.high_S)
         cv2.setTrackbarPos("Low V", self.window_name, self.low_V)
         cv2.setTrackbarPos("High V", self.window_name, self.high_V)
-
-        # # Threshold the image to extract only white colors
-        # threshold = cv2.inRange(hsv, (self.low_H, self.low_S, self.low_V), (self.high_H, self.high_S, self.high_V))
-
-        # return threshold
 
 
     ############### Preset Colours ###############
@@ -126,10 +119,9 @@ class Processing:
 
     # Set colour
     def set_color_preset(self, event, x, y, flags, param):
-        
-        # Check if the left mouse button was clicked
+        # LMB click for event
         if event == cv2.EVENT_LBUTTONDOWN:
-            # Button regions (clickable areas)
+            # Button regions
             if 10 < x < 150 and 10 < y < 60:  # Red button
                 preset = self.color_presets["Red"]
             elif 160 < x < 300 and 10 < y < 60:  # Blue button
@@ -139,9 +131,9 @@ class Processing:
             elif 460 < x < 600 and 10 < y < 60:  # Black button
                 preset = self.color_presets["Black"]
             else:
-                return  # If clicked outside the button area, do nothing
+                return  
             
-            # Set the HSV values based on the preset
+            # Set the HSV preset values
             self.low_H = preset["low_H"]
             self.high_H = preset["high_H"]
             self.low_S = preset["low_S"]
@@ -149,7 +141,7 @@ class Processing:
             self.low_V = preset["low_V"]
             self.high_V = preset["high_V"]
 
-            # Update trackbars to reflect the preset values
+            # Update trackbars for values
             cv2.setTrackbarPos("Low H", self.window_name, self.low_H)
             cv2.setTrackbarPos("High H", self.window_name, self.high_H)
             cv2.setTrackbarPos("Low S", self.window_name, self.low_S)
@@ -160,9 +152,11 @@ class Processing:
             print(f"Preset {list(self.color_presets.keys())[list(self.color_presets.values()).index(preset)]} selected")
 
 
-    ############### Object detect ###############
+    ############### Object Detect (Colour Vision) ###############
     # Colour vision
     def getMask(self, threshold):
+        """ Masks out based on HSV threshold. """
+
         # Initial Gaussian blur
         blurred = cv2.GaussianBlur(threshold, (15, 15), 0)
 
@@ -174,66 +168,66 @@ class Processing:
         mask = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)  # Fill small holes
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=2)    # Remove small noise
 
-        # Optional: Remove small blobs by area
+        # Remove small areas
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         mask_clean = np.zeros_like(mask)
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area > 1000:  # You can tweak this threshold
+            if area > 1000: 
                 cv2.drawContours(mask_clean, [cnt], -1, 255, -1)
 
         return mask_clean
 
+    # Pole mask
     def getPoleMask(self, threshold):
+        """ Masks out based on HSV threshold. Poles specific """
+
         # Morphology
         kernel = np.ones((5, 5), np.uint8)
         mask = cv2.morphologyEx(threshold, cv2.MORPH_CLOSE, kernel, iterations=2)  # Fill gaps
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)   # Remove small noise
 
-        # Optional: smooth & erode a bit to avoid blob fusion
+        # Smooth & erode
         mask = cv2.GaussianBlur(mask, (5, 5), 0)
         mask = cv2.erode(mask, kernel, iterations=1)
         mask = cv2.dilate(mask, kernel, iterations=1)
 
         return mask
 
-    # Focus detect
+    # Focus detection 
     def objectDetect(self, threshold, frame):
-        """ Detect the largest shape from the frame and display its centroid """
+        """ Detect the largest shape from the frame and display its centroid (Single item). """
 
-        # Basic colour processing
+        # Get mask
         mask = self.getMask(threshold)
 
         # Contouring
-        # contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contours, hierarchy = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-
-        # Sort contours by area to focus on the largest contour (most prominent shape)
+        # Sort by area
         contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
-        # Check if there are any contours (Only want one)
+        # If found
         if contours:
-            # Focus only on the largest contour (the first one in the sorted list)
+            # Focus: largest areea
             largest_contour = contours[0]
 
-            # Approximate the contour to reduce the number of vertices and smooth the outline
+            # Simplify contour
             epsilon = 0.02 * cv2.arcLength(largest_contour, True)
             approx = cv2.approxPolyDP(largest_contour, epsilon, True)
 
-            # Bounding box for the largest contour
+            # Bounding box
             x, y, w, h = cv2.boundingRect(approx)
 
-            # Calculate the moments to get the centroid
+            # Moments to get the centroid
             M = cv2.moments(largest_contour)
             if M["m00"] != 0:
-                # Calculate centroid
                 Cx = int(M["m10"] / M["m00"])
                 Cy = int(M["m01"] / M["m00"])
             else:
-                Cx, Cy = 0, 0  # Default to (0, 0) if division by zero
+                Cx, Cy = 0, 0
 
-            # Classify shape based on the number of vertices
+            # Classify shape
             if len(approx) == 3:
                 shape = "Triangle"
             elif len(approx) == 4:
@@ -244,19 +238,18 @@ class Processing:
             else:
                 shape = "Unknown"
 
-            # Annotate the largest shape on the frame
-            cv2.drawContours(frame, [approx], -1, (0, 255, 0), 2)  # Draw the contour
+            # Contour
+            cv2.drawContours(frame, [approx], -1, (0, 255, 0), 2)
             # cv2.putText(frame, shape, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-            # Draw the centroid (red circle) and label the coordinates
+            # Centroid
             cv2.circle(frame, (Cx, Cy), 5, (0, 0, 255), -1)  # Draw a red circle at the centroid
             cv2.putText(frame, f"Centroid: ({Cx}, {Cy})", (Cx + 10, Cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
-            # Return the frame, the largest contour approximation, and the centroid
             return frame, (Cx, Cy)
-
-        # Return the original frame, 
-        return frame, []
+        
+        else:
+            return frame, []
     
     # Pole detect
     def poleDetect(self, threshold, frame):
@@ -318,13 +311,63 @@ class Processing:
                     # cv2.putText(frame, f"({Cx}, {Cy})", (Cx + 10, Cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
         return frame, centroids
+    
+    # LZ
+    def detectLZ(self, frame):
+        """ Process HSV for landing zone """
 
+
+        ############### Initialise ###############
+        LZ = []
+
+        # Convert to HSV
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+        # Threshold for white
+        lower_white = np.array([0, 0, 200])
+        upper_white = np.array([179, 60, 255])
+        mask = cv2.inRange(hsv, lower_white, upper_white)
+
+        # Clean mask
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=2)
+
+        # Find contours
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+        # Draw bounding box, largest contour
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area > 1000:
+                x, y, w, h = cv2.boundingRect(cnt)
+                cx = x + w // 2
+                cy = y + h // 2
+                LZ.append((cx, cy))
+
+                # Annotate on frame
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 255), 2)
+                cv2.circle(frame, (cx, cy), 4, (255, 0, 0), -1)
+                cv2.putText(frame, "LZ", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+
+                # Only process the largest one
+                break  
+
+        return frame, LZ
+
+    
+    ############### Object Detect (YOLO Vision) ###############
+    # Poles
     def YOLODetectPoles(self, model, results, frame):
+        """ Iterate YOLO results for poles """
+
+
         ############### Initialise ###############
         centroids = []
         centroid_boxes = []
 
-        # Extract boxes and get centroids
+        # Extract boxes, get centroids
         for r in results:
             for box in r.boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
@@ -341,7 +384,7 @@ class Processing:
 
 
         ############### Get Gap ###############
-        # Sort boxes left to right by x
+        # Sort boxes left to right
         centroid_boxes.sort(key=lambda item: item[0][0])
 
         # Determine widest gap between adjacent poles
@@ -392,12 +435,16 @@ class Processing:
 
         return frame, centroids
 
+    # Target
     def YOLODetectTarget(self, model, results, frame):
+        """ Iterate YOLO results for target """
+
+
         ############### Initialise ###############
         target_boxes = []
         targets = []
 
-        # Extract boxes and get centroids
+        # Extract boxes, get centroids
         for r in results:
             for box in r.boxes:
                 cls = int(box.cls[0])
@@ -426,41 +473,3 @@ class Processing:
             targets.append(centroid)
 
         return frame, targets
-
-    def detectLZ(self, frame):
-        ############### Initialise ###############
-        LZ = []
-
-        # Convert to HSV
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-
-        # Threshold for white (adjust if needed)
-        lower_white = np.array([0, 0, 200])
-        upper_white = np.array([179, 60, 255])
-        mask = cv2.inRange(hsv, lower_white, upper_white)
-
-        # Clean the mask
-        kernel = np.ones((5, 5), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=2)
-
-        # Find contours
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contours = sorted(contours, key=cv2.contourArea, reverse=True)
-
-        # Draw bounding box around largest contour
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area > 1000:
-                x, y, w, h = cv2.boundingRect(cnt)
-                cx = x + w // 2
-                cy = y + h // 2
-                LZ.append((cx, cy))
-
-                # Annotate on frame
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 255), 2)
-                cv2.circle(frame, (cx, cy), 4, (255, 0, 0), -1)
-                cv2.putText(frame, "LZ", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-                break  # Only process the largest one
-
-        return frame, LZ
